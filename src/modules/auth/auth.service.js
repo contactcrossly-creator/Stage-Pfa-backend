@@ -36,6 +36,7 @@ const sanitizeUser = (user) => ({
   mustChangePassword: Boolean(user.mustChangePassword),
   fcmToken: user.fcmToken || '',
   createdAt: user.createdAt || null,
+  isActive: user.isActive !== false,
 });
 
 const logAuthAttempt = ({ action, email, status, ip, userAgent, reason }) => {
@@ -94,6 +95,17 @@ const login = async (payload, metadata = {}) => {
       email: normalizedEmail,
       status: 'failed',
       reason: 'user_not_found',
+      ...metadata,
+    });
+    throw new AppError('Invalid email or password', 401);
+  }
+
+  if (user.isActive === false) {
+    logAuthAttempt({
+      action: 'login',
+      email: normalizedEmail,
+      status: 'failed',
+      reason: 'inactive_user',
       ...metadata,
     });
     throw new AppError('Invalid email or password', 401);
@@ -214,6 +226,7 @@ const createInitialAdmin = async (payload) => {
     mustChangePassword: validatedPayload.mustChangePassword,
     fcmToken: validatedPayload.fcmToken || '',
     createdAt: now,
+    isActive: true,
   };
 
   await docRef.set(user);

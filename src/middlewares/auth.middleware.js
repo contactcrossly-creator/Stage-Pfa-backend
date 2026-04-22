@@ -26,6 +26,10 @@ const authenticate = async (req, res, next) => {
       throw new AppError('Unauthorized', 401);
     }
 
+    if (user.isActive === false) {
+      throw new AppError('Unauthorized', 401);
+    }
+
     req.user = {
       userId: user.id,
       role: user.role,
@@ -33,6 +37,7 @@ const authenticate = async (req, res, next) => {
       nom: user.nom,
       mustChangePassword: Boolean(user.mustChangePassword),
       fcmToken: user.fcmToken || null,
+      isActive: user.isActive !== false,
     };
 
     return next();

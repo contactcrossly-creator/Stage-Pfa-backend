@@ -9,6 +9,7 @@ const { authorize } = require('../../middlewares/role.middleware');
 
 const router = express.Router();
 
+router.patch('/change-password', authenticate, userController.changePassword);
 router.get('/me', authenticate, requirePasswordChangeCompleted, userController.getProfile);
 router.get(
   '/admin-dashboard',
@@ -16,6 +17,41 @@ router.get(
   requirePasswordChangeCompleted,
   authorize('ADMIN'),
   userController.getAdminDashboard
+);
+router.post(
+  '/',
+  authenticate,
+  requirePasswordChangeCompleted,
+  authorize('ADMIN'),
+  userController.createUser
+);
+router.get(
+  '/',
+  authenticate,
+  requirePasswordChangeCompleted,
+  authorize('ADMIN'),
+  userController.listUsers
+);
+router.get(
+  '/:id',
+  authenticate,
+  requirePasswordChangeCompleted,
+  authorize('ADMIN'),
+  userController.getUserById
+);
+router.put(
+  '/:id',
+  authenticate,
+  requirePasswordChangeCompleted,
+  authorize('ADMIN'),
+  userController.updateUser
+);
+router.delete(
+  '/:id',
+  authenticate,
+  requirePasswordChangeCompleted,
+  authorize('ADMIN'),
+  userController.deleteUser
 );
 
 module.exports = router;

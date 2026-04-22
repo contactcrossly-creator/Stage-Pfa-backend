@@ -1,3 +1,5 @@
+const userService = require('./user.service');
+
 const getProfile = async (req, res, next) => {
   try {
     res.status(200).json({
@@ -19,7 +21,70 @@ const getAdminDashboard = async (req, res, next) => {
   }
 };
 
+const createUser = async (req, res, next) => {
+  try {
+    const result = await userService.createUser(req.body, req.user);
+    res.status(201).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const listUsers = async (req, res, next) => {
+  try {
+    const result = await userService.listUsers(req.query);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getUserById = async (req, res, next) => {
+  try {
+    const user = await userService.getUserDetails(req.params.id);
+    res.status(200).json({ user });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const updateUser = async (req, res, next) => {
+  try {
+    const user = await userService.updateUser(req.params.id, req.body, req.user);
+    res.status(200).json({ user });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const deleteUser = async (req, res, next) => {
+  try {
+    const result = await userService.deleteUser(req.params.id, req.user);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const changePassword = async (req, res, next) => {
+  try {
+    const result = await userService.updateOwnPassword(req.user.userId, req.body, {
+      ip: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getProfile,
   getAdminDashboard,
+  createUser,
+  listUsers,
+  getUserById,
+  updateUser,
+  deleteUser,
+  changePassword,
 };
