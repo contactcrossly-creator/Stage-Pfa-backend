@@ -3,34 +3,82 @@ const groupService = require('./group.service');
 const createGroup = async (req, res, next) => {
   try {
     const group = await groupService.createGroup(req.body, req.user);
-    res.status(201).json({ group });
+    res.status(201).json({
+      status: 'success',
+      data: { group },
+    });
   } catch (error) {
     next(error);
   }
 };
 
-const listGroups = async (req, res, next) => {
+const getGroups = async (req, res, next) => {
   try {
-    const result = await groupService.listGroups();
-    res.status(200).json(result);
+    const result = await groupService.listGroups(req.query, req.user);
+    res.status(200).json({
+      status: 'success',
+      ...result,
+    });
   } catch (error) {
     next(error);
   }
 };
 
-const assignUsers = async (req, res, next) => {
+const getGroup = async (req, res, next) => {
   try {
-    const group = await groupService.assignUsersToGroup(req.params.id, req.body, req.user);
-    res.status(200).json({ group });
+    const group = await groupService.getGroupById(req.params.id);
+    res.status(200).json({
+      status: 'success',
+      data: { group },
+    });
   } catch (error) {
     next(error);
   }
 };
 
-const listUsersInGroup = async (req, res, next) => {
+const updateGroup = async (req, res, next) => {
   try {
-    const result = await groupService.listUsersInGroup(req.params.id);
-    res.status(200).json(result);
+    const group = await groupService.updateGroup(req.params.id, req.body, req.user);
+    res.status(200).json({
+      status: 'success',
+      data: { group },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const deleteGroup = async (req, res, next) => {
+  try {
+    await groupService.deleteGroup(req.params.id, req.user);
+    res.status(200).json({
+      status: 'success',
+      message: 'Group deleted successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const addMembers = async (req, res, next) => {
+  try {
+    const group = await groupService.addMembers(req.params.id, req.body, req.user);
+    res.status(200).json({
+      status: 'success',
+      data: { group },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const removeMember = async (req, res, next) => {
+  try {
+    const group = await groupService.removeMember(req.params.id, req.params.userId, req.user);
+    res.status(200).json({
+      status: 'success',
+      data: { group },
+    });
   } catch (error) {
     next(error);
   }
@@ -38,7 +86,10 @@ const listUsersInGroup = async (req, res, next) => {
 
 module.exports = {
   createGroup,
-  listGroups,
-  assignUsers,
-  listUsersInGroup,
+  getGroups,
+  getGroup,
+  updateGroup,
+  deleteGroup,
+  addMembers,
+  removeMember,
 };

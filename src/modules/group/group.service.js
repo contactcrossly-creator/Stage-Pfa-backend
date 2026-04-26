@@ -1,10 +1,12 @@
 const { db, admin } = require('../../config/firebase.config');
 const { AppError } = require('../../utils/app-error.util');
 const { getUserById } = require('../auth/auth.service');
-const { sanitizeUser, writeAuditLog } = require('../user/user.service');
+const { writeAuditLog } = require('../user/user.service');
 const {
   createGroupSchema,
-  assignUsersToGroupSchema,
+  updateGroupSchema,
+  addMembersSchema,
+  listGroupsQuerySchema,
   groupIdParamSchema,
 } = require('./group.model');
 
@@ -30,34 +32,46 @@ const validate = (schema, payload) => {
 };
 
 const toIsoDate = (value) => {
-  if (!value) {
-    return null;
-  }
-
-  if (typeof value.toDate === 'function') {
-    return value.toDate().toISOString();
-  }
-
-  if (value instanceof Date) {
-    return value.toISOString();
-  }
-
+  if (!value) return null;
+  if (typeof value.toDate === 'function') return value.toDate().toISOString();
+  if (value instanceof Date) return value.toISOString();
   return value;
 };
 
 const sanitizeGroup = (group) => ({
   id: group.id,
   name: group.name,
-  memberIds: Array.isArray(group.memberIds) ? group.memberIds : [],
+  description: group.description || '',
+  members: Array.isArray(group.members) ? group.members : [],
+  createdBy: group.createdBy || null,
   createdAt: toIsoDate(group.createdAt),
   updatedAt: toIsoDate(group.updatedAt),
-  createdBy: group.createdBy || null,
-  updatedBy: group.updatedBy || null,
 });
 
+/**
+ * Validate if all user IDs exist in the system
+ * @param {string[]} userIds 
+ */
+const ensureUsersExist = async (userIds) => {
+  if (!userIds || userIds.length === 0) return;
+  
+  const uniqueIds = [...new Set(userIds)];
+  const snapshots = await Promise.all(
+    uniqueIds.map(id => db.collection(USERS_COLLECTION).doc(id).get())
+  );
+
+  const missingIds = snapshots
+    .filter(snapshot => !snapshot.exists || snapshot.data().isActive === false)
+    .map((snapshot, index) => uniqueIds[index]);
+
+  if (missingIds.length > 0) {
+    throw new AppError(`Users not found or inactive: ${missingIds.join(', ')}`, 404);
+  }
+};
+
 const getGroupById = async (groupId) => {
-  const validatedParams = validate(groupIdParamSchema, { id: groupId });
-  const snapshot = await db.collection(GROUPS_COLLECTION).doc(validatedParams.id).get();
+  validate(groupIdParamSchema, { id: groupId });
+  const snapshot = await db.collection(GROUPS_COLLECTION).doc(groupId).get();
 
   if (!snapshot.exists) {
     throw new AppError('Group not found', 404);
@@ -71,6 +85,8 @@ const getGroupById = async (groupId) => {
 
 const createGroup = async (payload, actor) => {
   const validatedPayload = validate(createGroupSchema, payload);
+
+  // Check if name is already taken
   const existingSnapshot = await db
     .collection(GROUPS_COLLECTION)
     .where('name', '==', validatedPayload.name)
@@ -81,27 +97,43 @@ const createGroup = async (payload, actor) => {
     throw new AppError('A group with this name already exists', 400);
   }
 
+  // Ensure all members exist
+  await ensureUsersExist(validatedPayload.members);
+
+  // Creator is automatically added to members
+  const memberSet = new Set(validatedPayload.members || []);
+  memberSet.add(actor.userId);
+  const members = Array.from(memberSet);
+
   const docRef = db.collection(GROUPS_COLLECTION).doc();
   const group = {
     id: docRef.id,
     name: validatedPayload.name,
-    memberIds: [],
+    description: validatedPayload.description || '',
+    members: members,
+    createdBy: actor.userId,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    createdBy: actor.userId,
-    updatedBy: actor.userId,
   };
 
   await docRef.set(group);
+
+  // Update users to include this group in their groupIds
+  await Promise.all(
+    members.map(userId => 
+      db.collection(USERS_COLLECTION).doc(userId).update({
+        groupIds: admin.firestore.FieldValue.arrayUnion(group.id),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      })
+    )
+  );
 
   await writeAuditLog({
     actorUserId: actor.userId,
     action: 'GROUP_CREATED',
     targetType: 'group',
     targetId: group.id,
-    metadata: {
-      name: group.name,
-    },
+    metadata: { name: group.name },
   });
 
   return sanitizeGroup({
@@ -111,95 +143,224 @@ const createGroup = async (payload, actor) => {
   });
 };
 
-const listGroups = async () => {
-  const snapshot = await db.collection(GROUPS_COLLECTION).get();
-  const items = snapshot.docs
-    .map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }))
-    .sort((left, right) => left.name.localeCompare(right.name))
-    .map(sanitizeGroup);
+const listGroups = async (query, actor) => {
+  const validatedQuery = validate(listGroupsQuerySchema, query);
+  let firestoreQuery = db.collection(GROUPS_COLLECTION);
 
-  return { items };
-};
-
-const assignUsersToGroup = async (groupId, payload, actor) => {
-  const validatedPayload = validate(assignUsersToGroupSchema, payload);
-  const group = await getGroupById(groupId);
-  const uniqueUserIds = [...new Set(validatedPayload.userIds)];
-  const users = [];
-
-  for (const userId of uniqueUserIds) {
-    const user = await getUserById(userId);
-
-    if (!user || user.isActive === false) {
-      throw new AppError(`User not found: ${userId}`, 404);
-    }
-
-    users.push(user);
+  // If not ADMIN, only return groups where user is a member
+  if (actor.role !== 'ADMIN') {
+    firestoreQuery = firestoreQuery.where('members', 'array-contains', actor.userId);
   }
 
-  await db.collection(GROUPS_COLLECTION).doc(group.id).update({
-    memberIds: uniqueUserIds,
+  const snapshot = await firestoreQuery.get();
+  let groups = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+  // Sort by name
+  groups.sort((a, b) => a.name.localeCompare(b.name));
+
+  const total = groups.length;
+  const startIndex = (validatedQuery.page - 1) * validatedQuery.limit;
+  const paginatedGroups = groups
+    .slice(startIndex, startIndex + validatedQuery.limit)
+    .map(sanitizeGroup);
+
+  return {
+    items: paginatedGroups,
+    pagination: {
+      page: validatedQuery.page,
+      limit: validatedQuery.limit,
+      total,
+      totalPages: Math.ceil(total / validatedQuery.limit) || 1,
+    },
+  };
+};
+
+const updateGroup = async (groupId, payload, actor) => {
+  const validatedPayload = validate(updateGroupSchema, payload);
+  const group = await getGroupById(groupId);
+
+  // Permission check: Only ADMIN or creator
+  if (actor.role !== 'ADMIN' && group.createdBy !== actor.userId) {
+    throw new AppError('Unauthorized to update this group', 403);
+  }
+
+  const updates = {
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    updatedBy: actor.userId,
+  };
+
+  if (validatedPayload.name) updates.name = validatedPayload.name;
+  if (validatedPayload.description !== undefined) updates.description = validatedPayload.description;
+  
+  if (validatedPayload.members) {
+    if (validatedPayload.members.length === 0) {
+        throw new AppError('Group must have at least one member', 400);
+    }
+    await ensureUsersExist(validatedPayload.members);
+    
+    const previousMembers = group.members || [];
+    const newMembers = [...new Set(validatedPayload.members)];
+    
+    // Sync users' groupIds
+    const addedMembers = newMembers.filter(m => !previousMembers.includes(m));
+    const removedMembers = previousMembers.filter(m => !newMembers.includes(m));
+
+    await Promise.all([
+        ...addedMembers.map(userId => 
+            db.collection(USERS_COLLECTION).doc(userId).update({
+                groupIds: admin.firestore.FieldValue.arrayUnion(group.id),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            })
+        ),
+        ...removedMembers.map(userId => 
+            db.collection(USERS_COLLECTION).doc(userId).update({
+                groupIds: admin.firestore.FieldValue.arrayRemove(group.id),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            })
+        )
+    ]);
+
+    updates.members = newMembers;
+  }
+
+  await db.collection(GROUPS_COLLECTION).doc(group.id).update(updates);
+
+  await writeAuditLog({
+    actorUserId: actor.userId,
+    action: 'GROUP_UPDATED',
+    targetType: 'group',
+    targetId: group.id,
+    metadata: validatedPayload,
   });
 
+  const updatedGroup = await getGroupById(group.id);
+  return sanitizeGroup(updatedGroup);
+};
+
+const deleteGroup = async (groupId, actor) => {
+  const group = await getGroupById(groupId);
+
+  // Permission check: Only ADMIN (enforced by route, but safety first)
+  if (actor.role !== 'ADMIN') {
+    throw new AppError('Only ADMIN can delete groups', 403);
+  }
+
+  // Remove group ID from all members' groupIds
+  const members = group.members || [];
   await Promise.all(
-    users.map((user) =>
-      db
-        .collection(USERS_COLLECTION)
-        .doc(user.id)
-        .update({
-          groupIds: admin.firestore.FieldValue.arrayUnion(group.id),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          updatedBy: actor.userId,
-        })
+    members.map(userId => 
+      db.collection(USERS_COLLECTION).doc(userId).update({
+        groupIds: admin.firestore.FieldValue.arrayRemove(group.id),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      })
     )
   );
 
-  const previousMembers = Array.isArray(group.memberIds) ? group.memberIds : [];
-  const removedUserIds = previousMembers.filter((memberId) => !uniqueUserIds.includes(memberId));
+  await db.collection(GROUPS_COLLECTION).doc(group.id).delete();
+
+  await writeAuditLog({
+    actorUserId: actor.userId,
+    action: 'GROUP_DELETED',
+    targetType: 'group',
+    targetId: group.id,
+    metadata: { name: group.name },
+  });
+
+  return { message: 'Group deleted successfully' };
+};
+
+const addMembers = async (groupId, payload, actor) => {
+  const validatedPayload = validate(addMembersSchema, payload);
+  const group = await getGroupById(groupId);
+
+  // Permission check: Only ADMIN or creator
+  if (actor.role !== 'ADMIN' && group.createdBy !== actor.userId) {
+    throw new AppError('Unauthorized to add members to this group', 403);
+  }
+
+  await ensureUsersExist(validatedPayload.userIds);
+
+  const currentMembers = new Set(group.members || []);
+  const usersToAdd = validatedPayload.userIds.filter(id => !currentMembers.has(id));
+
+  if (usersToAdd.length === 0) {
+    return sanitizeGroup(group);
+  }
+
+  const updatedMembers = [...currentMembers, ...usersToAdd];
+
+  await db.collection(GROUPS_COLLECTION).doc(group.id).update({
+    members: updatedMembers,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
 
   await Promise.all(
-    removedUserIds.map((userId) =>
+    usersToAdd.map(userId => 
       db.collection(USERS_COLLECTION).doc(userId).update({
-        groupIds: admin.firestore.FieldValue.arrayRemove(group.id),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedBy: actor.userId,
+        groupIds: admin.firestore.FieldValue.arrayUnion(group.id),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
       })
     )
   );
 
   await writeAuditLog({
     actorUserId: actor.userId,
-    action: 'GROUP_MEMBERS_UPDATED',
+    action: 'GROUP_MEMBERS_ADDED',
     targetType: 'group',
     targetId: group.id,
-    metadata: {
-      userIds: uniqueUserIds,
-    },
+    metadata: { addedUserIds: usersToAdd },
   });
 
-  return sanitizeGroup(await getGroupById(group.id));
+  const updatedGroup = await getGroupById(group.id);
+  return sanitizeGroup(updatedGroup);
 };
 
-const listUsersInGroup = async (groupId) => {
+const removeMember = async (groupId, userId, actor) => {
   const group = await getGroupById(groupId);
-  const memberIds = Array.isArray(group.memberIds) ? group.memberIds : [];
 
-  const members = await Promise.all(memberIds.map((userId) => getUserById(userId)));
+  // Permission check: Only ADMIN or creator
+  if (actor.role !== 'ADMIN' && group.createdBy !== actor.userId) {
+    throw new AppError('Unauthorized to remove members from this group', 403);
+  }
 
-  return {
-    group: sanitizeGroup(group),
-    users: members.filter(Boolean).filter((user) => user.isActive !== false).map(sanitizeUser),
-  };
+  const currentMembers = group.members || [];
+  if (!currentMembers.includes(userId)) {
+    throw new AppError('User is not a member of this group', 400);
+  }
+
+  if (currentMembers.length <= 1) {
+    throw new AppError('Cannot remove the last member of the group', 400);
+  }
+
+  const updatedMembers = currentMembers.filter(id => id !== userId);
+
+  await db.collection(GROUPS_COLLECTION).doc(group.id).update({
+    members: updatedMembers,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  await db.collection(USERS_COLLECTION).doc(userId).update({
+    groupIds: admin.firestore.FieldValue.arrayRemove(group.id),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+
+  await writeAuditLog({
+    actorUserId: actor.userId,
+    action: 'GROUP_MEMBER_REMOVED',
+    targetType: 'group',
+    targetId: group.id,
+    metadata: { removedUserId: userId },
+  });
+
+  const updatedGroup = await getGroupById(group.id);
+  return sanitizeGroup(updatedGroup);
 };
 
 module.exports = {
   createGroup,
   listGroups,
-  assignUsersToGroup,
-  listUsersInGroup,
+  getGroupById: async (id) => sanitizeGroup(await getGroupById(id)),
+  updateGroup,
+  deleteGroup,
+  addMembers,
+  removeMember,
 };
