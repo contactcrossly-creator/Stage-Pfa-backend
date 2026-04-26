@@ -16,5 +16,6 @@ router.use("/stock", stockRouter);
 router.use("/productions", require("./modules/production/production.routes"));
 router.use("/quality-tests", require("./modules/quality/quality.routes"));
 router.use("/incidents", require("./modules/hse/hse.routes"));
+router.use("/notifications", require("./modules/notification/notification.routes"));
 
 module.exports = router;

@@ -1,6 +1,7 @@
 const { db, admin } = require('../../config/firebase.config');
 const { AppError } = require('../../utils/app-error.util');
 const { writeAuditLog } = require('../user/user.service');
+const notificationService = require('../notification/notification.service');
 const {
   createQualityTestSchema,
   updateQualityTestSchema,
@@ -152,6 +153,23 @@ const updateTest = async (id, payload, actor) => {
   };
 
   await docRef.update(updates);
+
+  if (validatedPayload.status === 'FAILED') {
+    await notificationService.sendNotification({
+      title: '⚠️ QUALITY ALERT',
+      message: `Production batch #${currentData.batchId} FAILED quality inspection.`,
+      type: 'WARNING',
+      targetType: 'ROLE',
+      targetValue: 'PRODUCTION',
+    });
+    await notificationService.sendNotification({
+      title: '⚠️ QUALITY ALERT',
+      message: `Production batch #${currentData.batchId} FAILED quality inspection.`,
+      type: 'WARNING',
+      targetType: 'ROLE',
+      targetValue: 'QUALITY',
+    });
+  }
 
   await writeAuditLog({
     actorUserId: actor.userId,

@@ -1,6 +1,7 @@
 const { db, admin } = require('../../config/firebase.config');
 const { AppError } = require('../../utils/app-error.util');
 const { writeAuditLog } = require('../user/user.service');
+const notificationService = require('../notification/notification.service');
 const {
   createProductionSchema,
   completeProductionSchema,
@@ -171,6 +172,14 @@ const completeProduction = async (id, payload, actor) => {
       quantity: newQuantity,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+  });
+
+  await notificationService.sendNotification({
+    title: '✅ Production Completed',
+    message: `Batch #${id} has been completed. Quantity: ${validatedPayload.quantityProduced}`,
+    type: 'INFO',
+    targetType: 'ROLE',
+    targetValue: 'PRODUCTION',
   });
 
   await writeAuditLog({

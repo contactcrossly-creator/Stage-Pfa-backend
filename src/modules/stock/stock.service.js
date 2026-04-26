@@ -1,6 +1,7 @@
 const { db, admin } = require('../../config/firebase.config');
 const { AppError } = require('../../utils/app-error.util');
 const { writeAuditLog } = require('../user/user.service');
+const notificationService = require('../notification/notification.service');
 const {
   createProductSchema,
   updateProductSchema,
@@ -198,7 +199,24 @@ const recordMovement = async (payload, actor) => {
 
     transaction.set(movementRef, movement);
     recordedMovement = { ...movement, createdAt: new Date() };
+
+    if (newQuantity <= (productData.minThreshold || 0)) {
+        // We'll perform notification AFTER transaction commit to avoid lock or just do it here if it's safe.
+        // Actually, sendNotification is async and outside the transaction logic is better.
+    }
   });
+
+  const productAfter = await productRef.get();
+  const dataAfter = productAfter.data();
+  if (dataAfter.quantity <= (dataAfter.minThreshold || 0)) {
+    await notificationService.sendNotification({
+        title: '📉 LOW STOCK ALERT',
+        message: `Product ${dataAfter.name} is below minimum threshold (${dataAfter.quantity}/${dataAfter.minThreshold})`,
+        type: 'ALERT',
+        targetType: 'ROLE',
+        targetValue: 'STOCK',
+    });
+  }
 
   await writeAuditLog({
     actorUserId: actor.userId,

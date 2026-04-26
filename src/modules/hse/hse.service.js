@@ -1,6 +1,7 @@
 const { db, admin } = require('../../config/firebase.config');
 const { AppError } = require('../../utils/app-error.util');
 const { writeAuditLog } = require('../user/user.service');
+const notificationService = require('../notification/notification.service');
 const {
   createIncidentSchema,
   updateIncidentSchema,
@@ -91,6 +92,20 @@ const createIncident = async (payload, actor) => {
 
   if (incident.priority === 'CRITICAL') {
     await triggerCriticalAlert(incident);
+    await notificationService.sendNotification({
+      title: '🚨 CRITICAL SAFETY ALERT',
+      message: `A critical incident has been reported: ${incident.title}`,
+      type: 'ALERT',
+      targetType: 'ROLE',
+      targetValue: 'HSE',
+    });
+    await notificationService.sendNotification({
+      title: '🚨 CRITICAL SAFETY ALERT',
+      message: `A critical incident has been reported: ${incident.title}`,
+      type: 'ALERT',
+      targetType: 'ROLE',
+      targetValue: 'ADMIN',
+    });
   }
 
   await writeAuditLog({
