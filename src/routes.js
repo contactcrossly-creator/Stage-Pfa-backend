@@ -13,5 +13,6 @@ router.use("/messages", require("./modules/message/message.routes"));
 const { productRouter, stockRouter } = require("./modules/stock/stock.routes");
 router.use("/products", productRouter);
 router.use("/stock", stockRouter);
+router.use("/productions", require("./modules/production/production.routes"));
 
 module.exports = router;
