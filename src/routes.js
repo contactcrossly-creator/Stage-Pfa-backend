@@ -10,4 +10,8 @@ router.use("/users", require("./modules/user/user.routes"));
 router.use("/groups", require("./modules/group/group.routes"));
 router.use("/messages", require("./modules/message/message.routes"));
 
+const { productRouter, stockRouter } = require("./modules/stock/stock.routes");
+router.use("/products", productRouter);
+router.use("/stock", stockRouter);
+
 module.exports = router;
