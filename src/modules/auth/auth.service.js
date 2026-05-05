@@ -1,14 +1,14 @@
-const { db, admin } = require('../../config/firebase.config');
-const { hashPassword, comparePassword } = require('../../utils/bcrypt.util');
-const { signToken } = require('../../utils/jwt.util');
-const { AppError } = require('../../utils/app-error.util');
+const { db, admin } = require("../../config/firebase.config");
+const { hashPassword, comparePassword } = require("../../utils/bcrypt.util");
+const { signToken } = require("../../utils/jwt.util");
+const { AppError } = require("../../utils/app-error.util");
 const {
   loginSchema,
   changePasswordSchema,
   seedAdminSchema,
-} = require('./auth.model');
+} = require("./auth.model");
 
-const USERS_COLLECTION = 'users';
+const USERS_COLLECTION = "users";
 
 const validate = (schema, payload) => {
   const { value, error } = schema.validate(payload, {
@@ -17,10 +17,10 @@ const validate = (schema, payload) => {
   });
 
   if (error) {
-    throw new AppError('Validation error', 400, {
+    throw new AppError("Validation error", 400, {
       fields: error.details.map((detail) => ({
         message: detail.message,
-        path: detail.path.join('.'),
+        path: detail.path.join("."),
       })),
     });
   }
@@ -34,18 +34,18 @@ const sanitizeUser = (user) => ({
   email: user.email,
   role: user.role,
   mustChangePassword: Boolean(user.mustChangePassword),
-  fcmToken: user.fcmToken || '',
+  fcmToken: user.fcmToken || "",
   createdAt: user.createdAt || null,
   isActive: user.isActive !== false,
 });
 
 const logAuthAttempt = ({ action, email, status, ip, userAgent, reason }) => {
-  console.info('[auth]', {
+  console.info("[auth]", {
     action,
     email,
     status,
-    ip: ip || 'unknown',
-    userAgent: userAgent || 'unknown',
+    ip: ip || "unknown",
+    userAgent: userAgent || "unknown",
     reason: reason || null,
     timestamp: new Date().toISOString(),
   });
@@ -68,7 +68,7 @@ const getUserByEmail = async (email) => {
   const normalizedEmail = email.trim().toLowerCase();
   const snapshot = await db
     .collection(USERS_COLLECTION)
-    .where('email', '==', normalizedEmail)
+    .where("email", "==", normalizedEmail)
     .limit(1)
     .get();
 
@@ -91,40 +91,40 @@ const login = async (payload, metadata = {}) => {
 
   if (!user) {
     logAuthAttempt({
-      action: 'login',
+      action: "login",
       email: normalizedEmail,
-      status: 'failed',
-      reason: 'user_not_found',
+      status: "failed",
+      reason: "user_not_found",
       ...metadata,
     });
-    throw new AppError('Invalid email or password', 401);
+    throw new AppError("Invalid email or password", 401);
   }
 
   if (user.isActive === false) {
     logAuthAttempt({
-      action: 'login',
+      action: "login",
       email: normalizedEmail,
-      status: 'failed',
-      reason: 'inactive_user',
+      status: "failed",
+      reason: "inactive_user",
       ...metadata,
     });
-    throw new AppError('Invalid email or password', 401);
+    throw new AppError("Invalid email or password", 401);
   }
 
   const passwordMatches = await comparePassword(
     validatedPayload.password,
-    user.passwordHash
+    user.passwordHash,
   );
 
   if (!passwordMatches) {
     logAuthAttempt({
-      action: 'login',
+      action: "login",
       email: normalizedEmail,
-      status: 'failed',
-      reason: 'invalid_password',
+      status: "failed",
+      reason: "invalid_password",
       ...metadata,
     });
-    throw new AppError('Invalid email or password', 401);
+    throw new AppError("Invalid email or password", 401);
   }
 
   const token = signToken({
@@ -133,10 +133,10 @@ const login = async (payload, metadata = {}) => {
   });
 
   logAuthAttempt({
-    action: 'login',
+    action: "login",
     email: normalizedEmail,
-    status: 'success',
-    reason: user.mustChangePassword ? 'password_change_required' : null,
+    status: "success",
+    reason: user.mustChangePassword ? "password_change_required" : null,
     ...metadata,
   });
 
@@ -151,32 +151,35 @@ const changePassword = async (userId, payload, metadata = {}) => {
   const user = await getUserById(userId);
 
   if (!user) {
-    throw new AppError('Unauthorized', 401);
+    throw new AppError("Unauthorized", 401);
   }
 
   const currentPasswordMatches = await comparePassword(
     validatedPayload.currentPassword,
-    user.passwordHash
+    user.passwordHash,
   );
 
   if (!currentPasswordMatches) {
     logAuthAttempt({
-      action: 'change_password',
+      action: "change_password",
       email: user.email,
-      status: 'failed',
-      reason: 'invalid_current_password',
+      status: "failed",
+      reason: "invalid_current_password",
       ...metadata,
     });
-    throw new AppError('Current password is incorrect', 401);
+    throw new AppError("Current password is incorrect", 401);
   }
 
   const samePassword = await comparePassword(
     validatedPayload.newPassword,
-    user.passwordHash
+    user.passwordHash,
   );
 
   if (samePassword) {
-    throw new AppError('New password must be different from current password', 400);
+    throw new AppError(
+      "New password must be different from current password",
+      400,
+    );
   }
 
   const nextPasswordHash = await hashPassword(validatedPayload.newPassword);
@@ -188,16 +191,16 @@ const changePassword = async (userId, payload, metadata = {}) => {
   });
 
   logAuthAttempt({
-    action: 'change_password',
+    action: "change_password",
     email: user.email,
-    status: 'success',
+    status: "success",
     ...metadata,
   });
 
   const updatedUser = await getUserById(user.id);
 
   return {
-    message: 'Password updated successfully',
+    message: "Password updated successfully",
     user: sanitizeUser(updatedUser),
   };
 };
@@ -205,12 +208,12 @@ const changePassword = async (userId, payload, metadata = {}) => {
 const createInitialAdmin = async (payload) => {
   const validatedPayload = validate(seedAdminSchema, {
     ...payload,
-    role: 'ADMIN',
+    role: "ADMIN",
   });
   const existingUser = await getUserByEmail(validatedPayload.email);
 
   if (existingUser) {
-    throw new AppError('A user with this email already exists', 400);
+    throw new AppError("A user with this email already exists", 400);
   }
 
   const passwordHash = await hashPassword(validatedPayload.password);
@@ -222,9 +225,9 @@ const createInitialAdmin = async (payload) => {
     nom: validatedPayload.nom,
     email: validatedPayload.email.toLowerCase(),
     passwordHash,
-    role: 'ADMIN',
+    role: "ADMIN",
     mustChangePassword: validatedPayload.mustChangePassword,
-    fcmToken: validatedPayload.fcmToken || '',
+    fcmToken: validatedPayload.fcmToken || "",
     createdAt: now,
     isActive: true,
   };
@@ -237,10 +240,20 @@ const createInitialAdmin = async (payload) => {
   });
 };
 
+const getFirebaseCustomToken = async (userId) => {
+  try {
+    const customToken = await admin.auth().createCustomToken(userId);
+    return { firebaseToken: customToken };
+  } catch (error) {
+    throw new AppError("Failed to generate Firebase authentication token", 500);
+  }
+};
+
 module.exports = {
   login,
   changePassword,
   getUserById,
   getUserByEmail,
   createInitialAdmin,
+  getFirebaseCustomToken,
 };

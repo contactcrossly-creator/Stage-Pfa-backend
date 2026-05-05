@@ -1,30 +1,20 @@
-const messageService = require('./message.service');
+const messageService = require("./message.service");
 
-const sendMessage = async (req, res, next) => {
+/**
+ * POST /api/messages/notify
+ * Called by Flutter after it writes a message directly to Firestore.
+ * Triggers FCM push notifications to all other group members.
+ */
+const notifyMessage = async (req, res, next) => {
   try {
-    const message = await messageService.sendMessage(req.body, req.user);
-    res.status(201).json({
-      status: 'success',
-      data: { message },
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-const getMessages = async (req, res, next) => {
-  try {
-    const result = await messageService.listMessages(req.query, req.user);
+    const result = await messageService.notifyGroupMembers(req.body, req.user);
     res.status(200).json({
-      status: 'success',
-      ...result,
+      status: "success",
+      data: result,
     });
   } catch (error) {
     next(error);
   }
 };
 
-module.exports = {
-  sendMessage,
-  getMessages,
-};
+module.exports = { notifyMessage };

@@ -1,20 +1,20 @@
-const express = require('express');
-
-const messageController = require('./message.controller');
+const express = require("express");
+const messageController = require("./message.controller");
 const {
   authenticate,
   requirePasswordChangeCompleted,
-} = require('../../middlewares/auth.middleware');
+} = require("../../middlewares/auth.middleware");
 
 const router = express.Router();
 
-// All routes require authentication
 router.use(authenticate, requirePasswordChangeCompleted);
 
-// Send message
-router.post('/', messageController.sendMessage);
-
-// Get messages by group
-router.get('/', messageController.getMessages);
+/**
+ * POST /api/messages/notify
+ * Triggers FCM push notifications to group members.
+ * Flutter writes messages directly to Firestore; this endpoint
+ * is called after the write to push FCM alerts to recipients.
+ */
+router.post("/notify", messageController.notifyMessage);
 
 module.exports = router;

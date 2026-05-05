@@ -1,0 +1,128 @@
+rules_version = '2';
+
+// ============================================================
+//  Firestore Security Rules — SCE-SICMS Chat  (anonymous auth)
+// ============================================================
+//
+//  Auth model
+//  ──────────
+//  • Flutter clients sign in ANONYMOUSLY via FirebaseAuth.signInAnonymously().
+//    This gives every device a stable, Firebase-persisted anonymous UID.
+//  • The real user identity is the JWT userId stored in message.senderId
+//    and group.members — completely independent of the Firebase anonymous UID.
+//  • All group / user management still goes through the backend (Admin SDK),
+//    which bypasses these rules entirely.
+//
+//  Security posture (temporary — upgrade to custom-token when ready)
+//  ──────────────────────────────────────────────────────────────────
+//  • Any authenticated (anonymous) Firebase user can read / write groups and
+//    messages. This is intentional while custom-token infrastructure is being
+//    set up.  The data model (senderId = JWT userId) is already in place, so
+//    switching to custom tokens later requires only a rule update — no data
+//    migration.
+//
+//  Upgrade path → custom tokens
+//  ─────────────────────────────
+//  1. Enable the backend endpoint  GET /api/auth/firebase-token
+//  2. In auth_repository_impl.dart replace signInAnonymously() with
+//       await FirebaseAuth.instance.signInWithCustomToken(firebaseToken)
+//  3. Restore the strict isMember() rules below (commented out for reference)
+// ============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── GROUPS ──────────────────────────────────────────────────────────────
+    match /groups/{groupId} {
+
+      // Any authenticated user may read group documents.
+      allow read: if request.auth != null;
+
+      // Group creation and deletion are backend-only (Admin SDK).
+      allow create, delete: if false;
+
+      // Authenticated clients may update ONLY the lastMessage / lastMessageAt
+      // preview fields written by Flutter after a sendMessage().
+      allow update: if request.auth != null
+        && request.resource.data.diff(resource.data)
+             .affectedKeys()
+             .hasOnly(['lastMessage', 'lastMessageAt']);
+
+      // ── Messages subcollection ────────────────────────────────────────────
+      match /messages/{messageId} {
+
+        // Any authenticated user may read messages.
+        allow read: if request.auth != null;
+
+        // Any authenticated user may create a message, subject to content
+        // length validation.  senderId is the JWT userId set by Flutter —
+        // it is NOT the anonymous Firebase UID.
+        allow create: if request.auth != null
+          && request.resource.data.senderId is string
+          && request.resource.data.senderId.size() > 0
+          && request.resource.data.content is string
+          && request.resource.data.content.size() > 0
+          && request.resource.data.content.size() <= 1000;
+
+        // Messages are immutable once written.
+        allow update, delete: if false;
+      }
+
+      // ── Typing indicators ─────────────────────────────────────────────────
+      match /typing/{userId} {
+        allow read, write: if request.auth != null;
+      }
+
+      // ── Read receipts ─────────────────────────────────────────────────────
+      match /readStatus/{userId} {
+        allow read, write: if request.auth != null;
+      }
+    }
+
+    // ─── ALL OTHER COLLECTIONS ────────────────────────────────────────────────
+    // users, notifications, audit_logs — backend (Admin SDK) only.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ============================================================
+    //  REFERENCE — Strict rules to restore when using custom tokens
+    // ============================================================
+    //
+    //  function isMember(groupId) {
+    //    return request.auth != null
+    //      && request.auth.uid in
+    //         get(/databases/$(database)/documents/groups/$(groupId)).data.members;
+    //  }
+    //
+    //  match /groups/{groupId} {
+    //    allow read: if request.auth != null
+    //      && request.auth.uid in resource.data.members;
+    //    allow create, delete: if false;
+    //    allow update: if request.auth != null
+    //      && request.auth.uid in resource.data.members
+    //      && request.resource.data.diff(resource.data)
+    //           .affectedKeys().hasOnly(['lastMessage', 'lastMessageAt']);
+    //
+    //    match /messages/{messageId} {
+    //      allow read: if isMember(groupId);
+    //      allow create: if isMember(groupId)
+    //        && request.resource.data.senderId == request.auth.uid
+    //        && request.resource.data.content is string
+    //        && request.resource.data.content.size() > 0
+    //        && request.resource.data.content.size() <= 1000
+    //        && request.resource.data.createdAt == request.time;
+    //      allow update, delete: if false;
+    //    }
+    //    match /typing/{userId} {
+    //      allow read: if isMember(groupId);
+    //      allow write: if isMember(groupId) && request.auth.uid == userId;
+    //    }
+    //    match /readStatus/{userId} {
+    //      allow read: if isMember(groupId);
+    //      allow write: if isMember(groupId) && request.auth.uid == userId;
+    //    }
+    //  }
+    // ============================================================
+  }
+}
