@@ -54,6 +54,15 @@ const triggerAlert = async (req, res, next) => {
   }
 };
 
+const deleteIncident = async (req, res, next) => {
+  try {
+    const result = await hseService.deleteIncident(req.params.id, req.user);
+    res.status(200).json({ status: 'success', data: result });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createIncident,
   getIncidents,
@@ -61,4 +70,5 @@ module.exports = {
   getIncident,
   updateIncident,
   triggerAlert,
+  deleteIncident,
 };

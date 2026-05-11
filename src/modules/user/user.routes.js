@@ -29,14 +29,12 @@ router.get(
   '/',
   authenticate,
   requirePasswordChangeCompleted,
-  authorize('ADMIN'),
   userController.listUsers
 );
 router.get(
   '/:id',
   authenticate,
   requirePasswordChangeCompleted,
-  authorize('ADMIN'),
   userController.getUserById
 );
 router.put(

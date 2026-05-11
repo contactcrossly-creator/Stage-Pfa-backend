@@ -28,6 +28,9 @@ router.get('/', hseController.getIncidents);
 // Update Incident - Role logic in Service (HSE/ADMIN for priority/assignment)
 router.put('/:id', hseController.updateIncident);
 
+// Delete Incident - Reporter, HSE and ADMIN
+router.delete('/:id', hseController.deleteIncident);
+
 // Trigger Manual Alert - HSE and ADMIN
 router.post('/:id/alert', authorize('ADMIN', 'HSE'), hseController.triggerAlert);
 

@@ -37,14 +37,31 @@ const toIsoDate = (value) => {
   return value;
 };
 
+const getUserName = async (userId) => {
+  if (!userId) return null;
+  try {
+    const snapshot = await db.collection('users').doc(userId).get();
+    if (snapshot.exists) {
+      return snapshot.data().nom || null;
+    }
+    return null;
+  } catch (error) {
+    console.warn(`User ${userId} not found for quality test`);
+    return null;
+  }
+};
+
 const sanitizeTest = (t) => ({
   id: t.id,
   batchId: t.batchId,
   testedBy: t.testedBy || null,
+  testedByName: t.testedByName || null,
+  batchName: t.batchName || null,
   status: t.status,
   notes: t.notes || '',
   testedAt: toIsoDate(t.testedAt),
   createdAt: toIsoDate(t.createdAt),
+  batch: t.batch || null,
 });
 
 const getBatch = async (batchId) => {
@@ -100,9 +117,26 @@ const listTests = async (query) => {
   const snapshot = await firestoreQuery.get();
   const allResults = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-  const total = allResults.length;
+  // Fetch batch details and tester names for each test
+  const testsWithDetails = await Promise.all(
+    allResults.map(async (test) => {
+      try {
+        const batch = await getBatch(test.batchId);
+        const batchName = batch.productName || null;
+        const testedByName = test.testedBy ? await getUserName(test.testedBy) : null;
+        return { ...test, batch, batchName, testedByName };
+      } catch (error) {
+        // If batch not found, still return test but without batch info
+        console.warn(`Batch ${test.batchId} not found for quality test ${test.id}`);
+        const testedByName = test.testedBy ? await getUserName(test.testedBy) : null;
+        return { ...test, batch: null, batchName: null, testedByName };
+      }
+    })
+  );
+
+  const total = testsWithDetails.length;
   const startIndex = (validatedQuery.page - 1) * validatedQuery.limit;
-  const paginated = allResults
+  const paginated = testsWithDetails
     .slice(startIndex, startIndex + validatedQuery.limit)
     .map(sanitizeTest);
 
@@ -125,7 +159,21 @@ const getTestById = async (id) => {
     throw new AppError('Quality test not found', 404);
   }
 
-  return sanitizeTest({ id: snapshot.id, ...snapshot.data() });
+  const testData = { id: snapshot.id, ...snapshot.data() };
+  
+  // Resolve tester name
+  const testedByName = testData.testedBy ? await getUserName(testData.testedBy) : null;
+  
+  // Fetch batch details for consistency with list view
+  try {
+    const batch = await getBatch(testData.batchId);
+    const batchName = batch.productName || null;
+    return sanitizeTest({ ...testData, batch, batchName, testedByName });
+  } catch (error) {
+    // If batch not found, still return test but without batch info
+    console.warn(`Batch ${testData.batchId} not found for quality test ${testData.id}`);
+    return sanitizeTest({ ...testData, batch: null, batchName: null, testedByName });
+  }
 };
 
 const updateTest = async (id, payload, actor) => {
@@ -180,7 +228,9 @@ const updateTest = async (id, payload, actor) => {
   });
 
   const updatedSnapshot = await docRef.get();
-  return sanitizeTest({ id: updatedSnapshot.id, ...updatedSnapshot.data() });
+  const updatedTest = { id: updatedSnapshot.id, ...updatedSnapshot.data() };
+  const testedByName = updatedTest.testedBy ? await getUserName(updatedTest.testedBy) : null;
+  return sanitizeTest({ ...updatedTest, testedByName });
 };
 
 module.exports = {

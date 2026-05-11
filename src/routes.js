@@ -14,7 +14,7 @@ const { productRouter, stockRouter } = require("./modules/stock/stock.routes");
 router.use("/products", productRouter);
 router.use("/stock", stockRouter);
 router.use("/productions", require("./modules/production/production.routes"));
-router.use("/quality-tests", require("./modules/quality/quality.routes"));
+router.use("/quality", require("./modules/quality/quality.routes"));
 router.use("/incidents", require("./modules/hse/hse.routes"));
 router.use("/notifications", require("./modules/notification/notification.routes"));
 

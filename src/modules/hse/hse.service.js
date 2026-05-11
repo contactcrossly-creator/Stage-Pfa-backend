@@ -248,10 +248,36 @@ const triggerManualAlert = async (id, actor) => {
     return { message: 'Alert triggered successfully' };
 };
 
+const deleteIncident = async (id, actor) => {
+  validate(incidentIdParamSchema, { id });
+  const incident = await getIncidentById(id);
+
+  const isAdminOrHse = actor.role === 'ADMIN' || actor.role === 'HSE';
+  const isReporter = incident.reportedBy === actor.userId;
+
+  // Only the reporter, HSE, or ADMIN can delete an incident
+  if (!isAdminOrHse && !isReporter) {
+    throw new AppError('Unauthorized to delete this incident', 403);
+  }
+
+  await db.collection(INCIDENTS_COLLECTION).doc(id).delete();
+
+  await writeAuditLog({
+    actorUserId: actor.userId,
+    action: 'INCIDENT_DELETED',
+    targetType: 'incident',
+    targetId: id,
+    metadata: { title: incident.title, status: incident.status },
+  });
+
+  return { message: 'Incident deleted successfully' };
+};
+
 module.exports = {
   createIncident,
   listIncidents,
   getIncidentById: async (id) => sanitizeIncident(await getIncidentById(id)),
   updateIncident,
   triggerManualAlert,
+  deleteIncident,
 };

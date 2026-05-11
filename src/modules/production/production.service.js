@@ -40,6 +40,7 @@ const toIsoDate = (value) => {
 const sanitizeBatch = (b) => ({
   id: b.id,
   productId: b.productId,
+  productName: b.productName || null,
   quantityPlanned: b.quantityPlanned,
   quantityProduced: b.quantityProduced || 0,
   status: b.status,
@@ -57,7 +58,15 @@ const getBatchById = async (id) => {
     throw new AppError('Production batch not found', 404);
   }
 
-  return { id: snapshot.id, ...snapshot.data() };
+  const batch = { id: snapshot.id, ...snapshot.data() };
+
+  // Fetch product name
+  const productSnapshot = await db.collection(PRODUCTS_COLLECTION).doc(batch.productId).get();
+  if (productSnapshot.exists) {
+    batch.productName = productSnapshot.data().name || null;
+  }
+
+  return batch;
 };
 
 const createProduction = async (payload, actor) => {
@@ -73,6 +82,7 @@ const createProduction = async (payload, actor) => {
   const batch = {
     id: docRef.id,
     productId: validatedPayload.productId,
+    productName: productSnapshot.data().name || null,
     quantityPlanned: validatedPayload.quantityPlanned,
     quantityProduced: 0,
     status: 'PENDING',
@@ -97,7 +107,17 @@ const createProduction = async (payload, actor) => {
 
 const listProductions = async () => {
   const snapshot = await db.collection(PRODUCTIONS_COLLECTION).orderBy('createdAt', 'desc').get();
-  return snapshot.docs.map(doc => sanitizeBatch({ id: doc.id, ...doc.data() }));
+  const batches = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  
+  // Fetch product names for all batches
+  for (let batch of batches) {
+    const productSnapshot = await db.collection(PRODUCTS_COLLECTION).doc(batch.productId).get();
+    if (productSnapshot.exists) {
+      batch.productName = productSnapshot.data().name || null;
+    }
+  }
+  
+  return batches.map(batch => sanitizeBatch(batch));
 };
 
 const startProduction = async (id, actor) => {
@@ -109,6 +129,7 @@ const startProduction = async (id, actor) => {
 
   await db.collection(PRODUCTIONS_COLLECTION).doc(id).update({
     status: 'RUNNING',
+    productName: batch.productName,
     startedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
@@ -151,6 +172,7 @@ const completeProduction = async (id, payload, actor) => {
     // 1. Update Batch status
     transaction.update(batchRef, {
       status: 'COMPLETED',
+      productName: batch.productName,
       quantityProduced: validatedPayload.quantityProduced,
       endedAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -201,6 +223,7 @@ const cancelProduction = async (id, actor) => {
   }
 
   await db.collection(PRODUCTIONS_COLLECTION).doc(id).update({
+    productName: batch.productName,
     status: 'CANCELLED',
     endedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -216,10 +239,15 @@ const cancelProduction = async (id, actor) => {
   return sanitizeBatch(await getBatchById(id));
 };
 
+const getBatchByIdWithDetails = async (id) => {
+  const batch = await getBatchById(id);
+  return sanitizeBatch(batch);
+};
+
 module.exports = {
   createProduction,
   listProductions,
-  getBatchById: async (id) => sanitizeBatch(await getBatchById(id)),
+  getBatchById: getBatchByIdWithDetails,
   startProduction,
   completeProduction,
   cancelProduction,
