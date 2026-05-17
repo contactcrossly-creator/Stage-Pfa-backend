@@ -18,7 +18,7 @@ const extractBearerToken = (authorizationHeader) => {
 
 const authenticate = async (req, res, next) => {
   try {
-    const token = extractBearerToken(req.headers.authorization);
+    const token = extractBearerToken(req.headers.authorization || (req.query.token ? `Bearer ${req.query.token}` : null));
     const payload = verifyToken(token);
     const user = await getUserById(payload.userId);
 

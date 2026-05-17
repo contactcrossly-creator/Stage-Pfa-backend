@@ -54,6 +54,12 @@ const sanitizeGroup = (group) => ({
  * Validate if all user IDs exist in the system
  * @param {string[]} userIds
  */
+const safeUpdateUser = async (userId, updates) => {
+  const snapshot = await db.collection(USERS_COLLECTION).doc(userId).get();
+  if (!snapshot.exists) return;
+  await snapshot.ref.update(updates);
+};
+
 const ensureUsersExist = async (userIds) => {
   if (!userIds || userIds.length === 0) return;
 
@@ -130,13 +136,10 @@ const createGroup = async (payload, actor) => {
   // Update users to include this group in their groupIds
   await Promise.all(
     members.map((userId) =>
-      db
-        .collection(USERS_COLLECTION)
-        .doc(userId)
-        .update({
-          groupIds: admin.firestore.FieldValue.arrayUnion(group.id),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }),
+      safeUpdateUser(userId, {
+        groupIds: admin.firestore.FieldValue.arrayUnion(group.id),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }),
     ),
   );
 
@@ -225,22 +228,16 @@ const updateGroup = async (groupId, payload, actor) => {
 
     await Promise.all([
       ...addedMembers.map((userId) =>
-        db
-          .collection(USERS_COLLECTION)
-          .doc(userId)
-          .update({
-            groupIds: admin.firestore.FieldValue.arrayUnion(group.id),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          }),
+        safeUpdateUser(userId, {
+          groupIds: admin.firestore.FieldValue.arrayUnion(group.id),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }),
       ),
       ...removedMembers.map((userId) =>
-        db
-          .collection(USERS_COLLECTION)
-          .doc(userId)
-          .update({
-            groupIds: admin.firestore.FieldValue.arrayRemove(group.id),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          }),
+        safeUpdateUser(userId, {
+          groupIds: admin.firestore.FieldValue.arrayRemove(group.id),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }),
       ),
     ]);
 
@@ -273,13 +270,10 @@ const deleteGroup = async (groupId, actor) => {
   const members = group.members || [];
   await Promise.all(
     members.map((userId) =>
-      db
-        .collection(USERS_COLLECTION)
-        .doc(userId)
-        .update({
-          groupIds: admin.firestore.FieldValue.arrayRemove(group.id),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }),
+      safeUpdateUser(userId, {
+        groupIds: admin.firestore.FieldValue.arrayRemove(group.id),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }),
     ),
   );
 
@@ -325,13 +319,10 @@ const addMembers = async (groupId, payload, actor) => {
 
   await Promise.all(
     usersToAdd.map((userId) =>
-      db
-        .collection(USERS_COLLECTION)
-        .doc(userId)
-        .update({
-          groupIds: admin.firestore.FieldValue.arrayUnion(group.id),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }),
+      safeUpdateUser(userId, {
+        groupIds: admin.firestore.FieldValue.arrayUnion(group.id),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }),
     ),
   );
 
@@ -371,13 +362,10 @@ const removeMember = async (groupId, userId, actor) => {
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 
-  await db
-    .collection(USERS_COLLECTION)
-    .doc(userId)
-    .update({
-      groupIds: admin.firestore.FieldValue.arrayRemove(group.id),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+  await safeUpdateUser(userId, {
+    groupIds: admin.firestore.FieldValue.arrayRemove(group.id),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
 
   await writeAuditLog({
     actorUserId: actor.userId,

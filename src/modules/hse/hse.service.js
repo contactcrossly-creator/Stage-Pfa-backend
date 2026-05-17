@@ -36,15 +36,47 @@ const toIsoDate = (value) => {
   return value;
 };
 
-const sanitizeIncident = (i) => ({
+const resolveUsers = async (...userIds) => {
+  const uniqueIds = [...new Set(userIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return {};
+
+  const snapshot = await db
+    .collection('users')
+    .where(admin.firestore.FieldPath.documentId(), 'in', uniqueIds)
+    .get();
+
+  const map = {};
+  const foundIds = new Set();
+  snapshot.docs.forEach((doc) => {
+    map[doc.id] = { id: doc.id, nom: doc.data().nom };
+    foundIds.add(doc.id);
+  });
+
+  const missingIds = uniqueIds.filter((id) => !foundIds.has(id));
+  if (missingIds.length > 0) {
+    const fbSnapshot = await db
+      .collection('users')
+      .where('firebaseUid', 'in', missingIds)
+      .get();
+    fbSnapshot.docs.forEach((doc) => {
+      map[doc.data().firebaseUid] = { id: doc.id, nom: doc.data().nom };
+    });
+  }
+
+  return map;
+};
+
+const sanitizeIncident = (i, userMap = {}) => ({
   id: i.id,
   title: i.title,
   description: i.description,
   type: i.type,
   priority: i.priority,
   status: i.status,
-  reportedBy: i.reportedBy,
-  assignedTo: i.assignedTo || null,
+  reportedBy: userMap[i.reportedBy] || { id: i.reportedBy, nom: 'Utilisateur supprimé' },
+  assignedTo: i.assignedTo
+    ? userMap[i.assignedTo] || { id: i.assignedTo, nom: 'Utilisateur supprimé' }
+    : null,
   createdAt: toIsoDate(i.createdAt),
   resolvedAt: toIsoDate(i.resolvedAt),
   updatedAt: toIsoDate(i.updatedAt),
@@ -116,7 +148,8 @@ const createIncident = async (payload, actor) => {
     metadata: { type: incident.type, priority: incident.priority },
   });
 
-  return sanitizeIncident({ ...incident, createdAt: new Date() });
+  const userMap = await resolveUsers(incident.reportedBy);
+  return sanitizeIncident({ ...incident, createdAt: new Date() }, userMap);
 };
 
 const listIncidents = async (query, actor, filterByMy = false) => {
@@ -148,7 +181,9 @@ const listIncidents = async (query, actor, filterByMy = false) => {
         return bTime - aTime;
     });
     
-    return { items: items.map(sanitizeIncident) };
+    const userIds = items.flatMap((i) => [i.reportedBy, i.assignedTo]);
+    const userMap = await resolveUsers(...userIds);
+    return { items: items.map((i) => sanitizeIncident(i, userMap)) };
   }
 
   if (validatedQuery.status) firestoreQuery = firestoreQuery.where('status', '==', validatedQuery.status);
@@ -160,10 +195,12 @@ const listIncidents = async (query, actor, filterByMy = false) => {
 
   const total = all.length;
   const startIndex = (validatedQuery.page - 1) * validatedQuery.limit;
-  const paginated = all.slice(startIndex, startIndex + validatedQuery.limit).map(sanitizeIncident);
+  const paginated = all.slice(startIndex, startIndex + validatedQuery.limit);
+  const userIds = paginated.flatMap((i) => [i.reportedBy, i.assignedTo]);
+  const userMap = await resolveUsers(...userIds);
 
   return {
-    items: paginated,
+    items: paginated.map((i) => sanitizeIncident(i, userMap)),
     pagination: {
       page: validatedQuery.page,
       limit: validatedQuery.limit,
@@ -231,7 +268,9 @@ const updateIncident = async (id, payload, actor) => {
     metadata: validatedPayload,
   });
 
-  return sanitizeIncident(await getIncidentById(id));
+  const updated = await getIncidentById(id);
+  const userMap = await resolveUsers(updated.reportedBy, updated.assignedTo);
+  return sanitizeIncident(updated, userMap);
 };
 
 const triggerManualAlert = async (id, actor) => {
@@ -276,7 +315,11 @@ const deleteIncident = async (id, actor) => {
 module.exports = {
   createIncident,
   listIncidents,
-  getIncidentById: async (id) => sanitizeIncident(await getIncidentById(id)),
+  getIncidentById: async (id) => {
+    const incident = await getIncidentById(id);
+    const userMap = await resolveUsers(incident.reportedBy, incident.assignedTo);
+    return sanitizeIncident(incident, userMap);
+  },
   updateIncident,
   triggerManualAlert,
   deleteIncident,

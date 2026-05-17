@@ -3,6 +3,7 @@ const REQUIRED_ENV_VARS = [
   'FIREBASE_PROJECT_ID',
   'FIREBASE_CLIENT_EMAIL',
   'FIREBASE_PRIVATE_KEY',
+  'OPENAI_API_KEY',
 ];
 
 const getEnv = (key, fallback) => {

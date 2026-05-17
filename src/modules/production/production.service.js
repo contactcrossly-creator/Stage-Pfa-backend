@@ -37,17 +37,63 @@ const toIsoDate = (value) => {
   return value;
 };
 
+const resolveUsers = async (...userIds) => {
+  const uniqueIds = [...new Set(userIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return {};
+
+  const snapshot = await db
+    .collection('users')
+    .where(admin.firestore.FieldPath.documentId(), 'in', uniqueIds)
+    .get();
+
+  const map = {};
+  const foundIds = new Set();
+  snapshot.docs.forEach((doc) => {
+    map[doc.id] = { id: doc.id, nom: doc.data().nom };
+    foundIds.add(doc.id);
+  });
+
+  const missingIds = uniqueIds.filter((id) => !foundIds.has(id));
+  if (missingIds.length > 0) {
+    const fbSnapshot = await db
+      .collection('users')
+      .where('firebaseUid', 'in', missingIds)
+      .get();
+    fbSnapshot.docs.forEach((doc) => {
+      map[doc.data().firebaseUid] = { id: doc.id, nom: doc.data().nom };
+    });
+  }
+
+  return map;
+};
+
+const resolveProducts = async (...productIds) => {
+  const uniqueIds = [...new Set(productIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return {};
+
+  const snapshot = await db
+    .collection(PRODUCTS_COLLECTION)
+    .where(admin.firestore.FieldPath.documentId(), 'in', uniqueIds)
+    .get();
+
+  const map = {};
+  snapshot.docs.forEach((doc) => {
+    map[doc.id] = { id: doc.id, name: doc.data().name };
+  });
+  return map;
+};
+
 const sanitizeBatch = (b) => ({
   id: b.id,
   productId: b.productId,
-  productName: b.productName || null,
   quantityPlanned: b.quantityPlanned,
   quantityProduced: b.quantityProduced || 0,
   status: b.status,
-  startedAt: toIsoDate(b.startedAt),
-  endedAt: toIsoDate(b.endedAt),
   createdBy: b.createdBy,
   createdAt: toIsoDate(b.createdAt),
+  startedAt: toIsoDate(b.startedAt),
+  endedAt: toIsoDate(b.endedAt),
+  updatedAt: toIsoDate(b.updatedAt),
 });
 
 const getBatchById = async (id) => {
@@ -58,21 +104,39 @@ const getBatchById = async (id) => {
     throw new AppError('Production batch not found', 404);
   }
 
-  const batch = { id: snapshot.id, ...snapshot.data() };
+  return { id: snapshot.id, ...snapshot.data() };
+};
 
-  // Fetch product name
-  const productSnapshot = await db.collection(PRODUCTS_COLLECTION).doc(batch.productId).get();
-  if (productSnapshot.exists) {
-    batch.productName = productSnapshot.data().name || null;
-  }
+const enrichBatches = async (batches) => {
+  if (!batches || batches.length === 0) return [];
 
-  return batch;
+  const productIds = batches.map((b) => b.productId).filter(Boolean);
+  const userIds = batches.map((b) => b.createdBy).filter(Boolean);
+
+  const [productMap, userMap] = await Promise.all([
+    resolveProducts(...productIds),
+    resolveUsers(...userIds),
+  ]);
+
+  const enriched = [...new Set(batches.map((b) => b.id))];
+  const userMapForEnrich = userMap;
+  const productMapForEnrich = productMap;
+
+  const noneUser = (id) => ({ id, nom: 'Utilisateur supprimé' });
+  const noneProduct = (id) => ({ id, name: 'Produit supprimé' });
+
+  return batches.map((b) =>
+    sanitizeBatch({
+      ...b,
+      productId: productMapForEnrich[b.productId] || noneProduct(b.productId),
+      createdBy: userMapForEnrich[b.createdBy] || noneUser(b.createdBy),
+    })
+  );
 };
 
 const createProduction = async (payload, actor) => {
   const validatedPayload = validate(createProductionSchema, payload);
 
-  // Validate product exists
   const productSnapshot = await db.collection(PRODUCTS_COLLECTION).doc(validatedPayload.productId).get();
   if (!productSnapshot.exists) {
     throw new AppError('Product not found', 404);
@@ -82,7 +146,6 @@ const createProduction = async (payload, actor) => {
   const batch = {
     id: docRef.id,
     productId: validatedPayload.productId,
-    productName: productSnapshot.data().name || null,
     quantityPlanned: validatedPayload.quantityPlanned,
     quantityProduced: 0,
     status: 'PENDING',
@@ -102,22 +165,14 @@ const createProduction = async (payload, actor) => {
     metadata: { productId: batch.productId, quantityPlanned: batch.quantityPlanned },
   });
 
-  return sanitizeBatch({ ...batch, createdAt: new Date() });
+  const enriched = await enrichBatches([{ ...batch, createdAt: new Date() }]);
+  return enriched[0];
 };
 
 const listProductions = async () => {
   const snapshot = await db.collection(PRODUCTIONS_COLLECTION).orderBy('createdAt', 'desc').get();
   const batches = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-  
-  // Fetch product names for all batches
-  for (let batch of batches) {
-    const productSnapshot = await db.collection(PRODUCTS_COLLECTION).doc(batch.productId).get();
-    if (productSnapshot.exists) {
-      batch.productName = productSnapshot.data().name || null;
-    }
-  }
-  
-  return batches.map(batch => sanitizeBatch(batch));
+  return enrichBatches(batches);
 };
 
 const startProduction = async (id, actor) => {
@@ -129,7 +184,6 @@ const startProduction = async (id, actor) => {
 
   await db.collection(PRODUCTIONS_COLLECTION).doc(id).update({
     status: 'RUNNING',
-    productName: batch.productName,
     startedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
@@ -141,13 +195,15 @@ const startProduction = async (id, actor) => {
     targetId: id,
   });
 
-  return sanitizeBatch(await getBatchById(id));
+  const updated = await getBatchById(id);
+  const enriched = await enrichBatches([updated]);
+  return enriched[0];
 };
 
 const completeProduction = async (id, payload, actor) => {
   const validatedPayload = validate(completeProductionSchema, payload);
   const batchRef = db.collection(PRODUCTIONS_COLLECTION).doc(id);
-  
+
   const batch = await getBatchById(id);
   if (batch.status !== 'RUNNING') {
     throw new AppError(`Cannot complete production in ${batch.status} status`, 400);
@@ -169,16 +225,13 @@ const completeProduction = async (id, payload, actor) => {
     const productData = productDoc.data();
     const newQuantity = (productData.quantity || 0) + validatedPayload.quantityProduced;
 
-    // 1. Update Batch status
     transaction.update(batchRef, {
       status: 'COMPLETED',
-      productName: batch.productName,
       quantityProduced: validatedPayload.quantityProduced,
       endedAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // 2. record Stock Movement
     transaction.set(movementRef, {
       id: movementRef.id,
       productId: batch.productId,
@@ -189,7 +242,6 @@ const completeProduction = async (id, payload, actor) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // 3. Update Product quantity
     transaction.update(productRef, {
       quantity: newQuantity,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -212,7 +264,9 @@ const completeProduction = async (id, payload, actor) => {
     metadata: { quantityProduced: validatedPayload.quantityProduced },
   });
 
-  return sanitizeBatch(await getBatchById(id));
+  const updated = await getBatchById(id);
+  const enriched = await enrichBatches([updated]);
+  return enriched[0];
 };
 
 const cancelProduction = async (id, actor) => {
@@ -223,7 +277,6 @@ const cancelProduction = async (id, actor) => {
   }
 
   await db.collection(PRODUCTIONS_COLLECTION).doc(id).update({
-    productName: batch.productName,
     status: 'CANCELLED',
     endedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -236,18 +289,19 @@ const cancelProduction = async (id, actor) => {
     targetId: id,
   });
 
-  return sanitizeBatch(await getBatchById(id));
-};
-
-const getBatchByIdWithDetails = async (id) => {
-  const batch = await getBatchById(id);
-  return sanitizeBatch(batch);
+  const updated = await getBatchById(id);
+  const enriched = await enrichBatches([updated]);
+  return enriched[0];
 };
 
 module.exports = {
   createProduction,
   listProductions,
-  getBatchById: getBatchByIdWithDetails,
+  getBatchById: async (id) => {
+    const batch = await getBatchById(id);
+    const enriched = await enrichBatches([batch]);
+    return enriched[0];
+  },
   startProduction,
   completeProduction,
   cancelProduction,

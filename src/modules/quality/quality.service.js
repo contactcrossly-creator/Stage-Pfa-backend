@@ -2,6 +2,7 @@ const { db, admin } = require('../../config/firebase.config');
 const { AppError } = require('../../utils/app-error.util');
 const { writeAuditLog } = require('../user/user.service');
 const notificationService = require('../notification/notification.service');
+const qualityReportService = require('./quality-report.service');
 const {
   createQualityTestSchema,
   updateQualityTestSchema,
@@ -11,6 +12,8 @@ const {
 
 const QUALITY_TESTS_COLLECTION = 'quality_tests';
 const PRODUCTIONS_COLLECTION = 'production_batches';
+const USERS_COLLECTION = 'users';
+const PRODUCTS_COLLECTION = 'products';
 
 const validate = (schema, payload) => {
   const { value, error } = schema.validate(payload, {
@@ -37,26 +40,69 @@ const toIsoDate = (value) => {
   return value;
 };
 
-const getUserName = async (userId) => {
-  if (!userId) return null;
-  try {
-    const snapshot = await db.collection('users').doc(userId).get();
-    if (snapshot.exists) {
-      return snapshot.data().nom || null;
-    }
-    return null;
-  } catch (error) {
-    console.warn(`User ${userId} not found for quality test`);
-    return null;
+const resolveUsers = async (...userIds) => {
+  const uniqueIds = [...new Set(userIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return {};
+
+  const snapshot = await db
+    .collection(USERS_COLLECTION)
+    .where(admin.firestore.FieldPath.documentId(), 'in', uniqueIds)
+    .get();
+
+  const map = {};
+  const foundIds = new Set();
+  snapshot.docs.forEach((doc) => {
+    map[doc.id] = { id: doc.id, nom: doc.data().nom };
+    foundIds.add(doc.id);
+  });
+
+  const missingIds = uniqueIds.filter((id) => !foundIds.has(id));
+  if (missingIds.length > 0) {
+    const fbSnapshot = await db
+      .collection(USERS_COLLECTION)
+      .where('firebaseUid', 'in', missingIds)
+      .get();
+    fbSnapshot.docs.forEach((doc) => {
+      map[doc.data().firebaseUid] = { id: doc.id, nom: doc.data().nom };
+    });
   }
+
+  return map;
 };
+
+const resolveProducts = async (...productIds) => {
+  const uniqueIds = [...new Set(productIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return {};
+
+  const snapshot = await db
+    .collection(PRODUCTS_COLLECTION)
+    .where(admin.firestore.FieldPath.documentId(), 'in', uniqueIds)
+    .get();
+
+  const map = {};
+  snapshot.docs.forEach((doc) => {
+    map[doc.id] = { id: doc.id, name: doc.data().name };
+  });
+  return map;
+};
+
+const enrichBatch = (raw, productMap, userMap) => ({
+  id: raw.id,
+  productId: productMap[raw.productId] || { id: raw.productId, name: 'Produit supprimé' },
+  quantityPlanned: raw.quantityPlanned,
+  quantityProduced: raw.quantityProduced || 0,
+  status: raw.status,
+  createdBy: userMap[raw.createdBy] || { id: raw.createdBy, nom: 'Utilisateur supprimé' },
+  createdAt: toIsoDate(raw.createdAt),
+  startedAt: toIsoDate(raw.startedAt),
+  endedAt: toIsoDate(raw.endedAt),
+  updatedAt: toIsoDate(raw.updatedAt),
+});
 
 const sanitizeTest = (t) => ({
   id: t.id,
   batchId: t.batchId,
-  testedBy: t.testedBy || null,
-  testedByName: t.testedByName || null,
-  batchName: t.batchName || null,
+  testedBy: t.testedBy,
   status: t.status,
   notes: t.notes || '',
   testedAt: toIsoDate(t.testedAt),
@@ -64,21 +110,15 @@ const sanitizeTest = (t) => ({
   batch: t.batch || null,
 });
 
-const getBatch = async (batchId) => {
-  const snapshot = await db.collection(PRODUCTIONS_COLLECTION).doc(batchId).get();
-  if (!snapshot.exists) {
-    throw new AppError('Production batch not found', 404);
-  }
-  return snapshot.data();
-};
-
 const createTest = async (payload, actor) => {
   const validatedPayload = validate(createQualityTestSchema, payload);
 
-  // Business Rule: Batch must exist and be COMPLETED
-  const batch = await getBatch(validatedPayload.batchId);
-  if (batch.status !== 'COMPLETED') {
-    throw new AppError(`Quality tests can only be created for COMPLETED batches. Current batch status: ${batch.status}`, 400);
+  const snapshot = await db.collection(PRODUCTIONS_COLLECTION).doc(validatedPayload.batchId).get();
+  if (!snapshot.exists) {
+    throw new AppError('Production batch not found', 404);
+  }
+  if (snapshot.data().status !== 'COMPLETED') {
+    throw new AppError(`Quality tests can only be created for COMPLETED batches. Current batch status: ${snapshot.data().status}`, 400);
   }
 
   const docRef = db.collection(QUALITY_TESTS_COLLECTION).doc();
@@ -103,7 +143,16 @@ const createTest = async (payload, actor) => {
     metadata: { batchId: test.batchId },
   });
 
-  return sanitizeTest({ ...test, createdAt: new Date() });
+  const userMap = await resolveUsers(actor.userId);
+  const productMap = await resolveProducts(snapshot.data().productId);
+  const enriched = enrichBatch({ id: snapshot.id, ...snapshot.data() }, productMap, userMap);
+
+  return sanitizeTest({
+    ...test,
+    createdAt: new Date(),
+    testedBy: userMap[actor.userId] || { id: actor.userId, nom: 'Utilisateur supprimé' },
+    batch: enriched,
+  });
 };
 
 const listTests = async (query) => {
@@ -117,22 +166,45 @@ const listTests = async (query) => {
   const snapshot = await firestoreQuery.get();
   const allResults = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-  // Fetch batch details and tester names for each test
-  const testsWithDetails = await Promise.all(
-    allResults.map(async (test) => {
-      try {
-        const batch = await getBatch(test.batchId);
-        const batchName = batch.productName || null;
-        const testedByName = test.testedBy ? await getUserName(test.testedBy) : null;
-        return { ...test, batch, batchName, testedByName };
-      } catch (error) {
-        // If batch not found, still return test but without batch info
-        console.warn(`Batch ${test.batchId} not found for quality test ${test.id}`);
-        const testedByName = test.testedBy ? await getUserName(test.testedBy) : null;
-        return { ...test, batch: null, batchName: null, testedByName };
+  const userIds = allResults.map((t) => t.testedBy).filter(Boolean);
+  const batchIds = allResults.map((t) => t.batchId).filter(Boolean);
+
+  const [userMap, productMap] = await Promise.all([
+    resolveUsers(...userIds),
+    (async () => {
+      if (batchIds.length === 0) return {};
+      const batchSnapshots = await Promise.all(
+        batchIds.map((id) => db.collection(PRODUCTIONS_COLLECTION).doc(id).get())
+      );
+      const productIds = batchSnapshots
+        .filter((d) => d.exists)
+        .map((d) => d.data().productId)
+        .filter(Boolean);
+      return resolveProducts(...productIds);
+    })(),
+  ]);
+
+  const batchDataMap = {};
+  if (batchIds.length > 0) {
+    const batchSnapshots = await Promise.all(
+      batchIds.map((id) =>
+        db.collection(PRODUCTIONS_COLLECTION).doc(id).get().then((d) => ({ id, d }))
+      )
+    );
+    batchSnapshots.forEach(({ id, d }) => {
+      if (d.exists) {
+        batchDataMap[id] = enrichBatch({ id: d.id, ...d.data() }, productMap, userMap);
       }
-    })
-  );
+    });
+  }
+
+  const testsWithDetails = allResults.map((test) => ({
+    ...test,
+    testedBy: test.testedBy
+      ? userMap[test.testedBy] || { id: test.testedBy, nom: 'Utilisateur supprimé' }
+      : null,
+    batch: batchDataMap[test.batchId] || null,
+  }));
 
   const total = testsWithDetails.length;
   const startIndex = (validatedQuery.page - 1) * validatedQuery.limit;
@@ -160,20 +232,25 @@ const getTestById = async (id) => {
   }
 
   const testData = { id: snapshot.id, ...snapshot.data() };
-  
-  // Resolve tester name
-  const testedByName = testData.testedBy ? await getUserName(testData.testedBy) : null;
-  
-  // Fetch batch details for consistency with list view
-  try {
-    const batch = await getBatch(testData.batchId);
-    const batchName = batch.productName || null;
-    return sanitizeTest({ ...testData, batch, batchName, testedByName });
-  } catch (error) {
-    // If batch not found, still return test but without batch info
-    console.warn(`Batch ${testData.batchId} not found for quality test ${testData.id}`);
-    return sanitizeTest({ ...testData, batch: null, batchName: null, testedByName });
+
+  const [userMap, batchSnap] = await Promise.all([
+    resolveUsers(testData.testedBy),
+    db.collection(PRODUCTIONS_COLLECTION).doc(testData.batchId).get(),
+  ]);
+
+  let enriched = null;
+  if (batchSnap.exists) {
+    const productMap = await resolveProducts(batchSnap.data().productId);
+    enriched = enrichBatch({ id: batchSnap.id, ...batchSnap.data() }, productMap, userMap);
   }
+
+  return sanitizeTest({
+    ...testData,
+    testedBy: testData.testedBy
+      ? userMap[testData.testedBy] || { id: testData.testedBy, nom: 'Utilisateur supprimé' }
+      : null,
+    batch: enriched,
+  });
 };
 
 const updateTest = async (id, payload, actor) => {
@@ -227,10 +304,27 @@ const updateTest = async (id, payload, actor) => {
     metadata: { notes: updates.notes },
   });
 
+  qualityReportService.deleteReport(id);
+
   const updatedSnapshot = await docRef.get();
   const updatedTest = { id: updatedSnapshot.id, ...updatedSnapshot.data() };
-  const testedByName = updatedTest.testedBy ? await getUserName(updatedTest.testedBy) : null;
-  return sanitizeTest({ ...updatedTest, testedByName });
+
+  const [userMap, batchSnap] = await Promise.all([
+    resolveUsers(actor.userId),
+    db.collection(PRODUCTIONS_COLLECTION).doc(updatedTest.batchId).get(),
+  ]);
+
+  let enriched = null;
+  if (batchSnap.exists) {
+    const productMap = await resolveProducts(batchSnap.data().productId);
+    enriched = enrichBatch({ id: batchSnap.id, ...batchSnap.data() }, productMap, userMap);
+  }
+
+  return sanitizeTest({
+    ...updatedTest,
+    testedBy: userMap[actor.userId] || { id: actor.userId, nom: 'Utilisateur supprimé' },
+    batch: enriched,
+  });
 };
 
 module.exports = {

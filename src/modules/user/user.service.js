@@ -3,8 +3,9 @@ const crypto = require('crypto');
 const { db, admin } = require('../../config/firebase.config');
 const { hashPassword } = require('../../utils/bcrypt.util');
 const { AppError } = require('../../utils/app-error.util');
-const { sendUserCredentialsEmail } = require('../../utils/email.util');
 const { getUserByEmail, getUserById, changePassword } = require('../auth/auth.service');
+const { createFirebaseUser } = require('../../services/firebase-auth.service');
+const { sendCredentialsEmail } = require('../../services/firebase-email.service');
 const {
   createUserSchema,
   listUsersQuerySchema,
@@ -61,6 +62,7 @@ const sanitizeUser = (user) => ({
   updatedAt: toIsoDate(user.updatedAt),
   isActive: user.isActive !== false,
   groupIds: Array.isArray(user.groupIds) ? user.groupIds : [],
+  firebaseUid: user.firebaseUid || null,
   createdBy: user.createdBy || null,
   updatedBy: user.updatedBy || null,
   deletedBy: user.deletedBy || null,
@@ -117,6 +119,13 @@ const createUser = async (payload, actor) => {
 
   const temporaryPassword = buildTemporaryPassword();
   const passwordHash = await hashPassword(temporaryPassword);
+
+  const firebaseUid = await createFirebaseUser({
+    email: validatedPayload.email,
+    password: temporaryPassword,
+    displayName: validatedPayload.nom,
+  });
+
   const docRef = db.collection(USERS_COLLECTION).doc();
 
   const user = {
@@ -124,6 +133,7 @@ const createUser = async (payload, actor) => {
     nom: validatedPayload.nom,
     email: validatedPayload.email.toLowerCase(),
     passwordHash,
+    firebaseUid,
     role: validatedPayload.role,
     mustChangePassword: true,
     fcmToken: validatedPayload.fcmToken || '',
@@ -146,7 +156,7 @@ const createUser = async (payload, actor) => {
 
   if (validatedPayload.sendEmail) {
     try {
-      emailNotification = await sendUserCredentialsEmail({
+      emailNotification = await sendCredentialsEmail({
         to: user.email,
         nom: user.nom,
         temporaryPassword,
@@ -316,6 +326,21 @@ const deleteUser = async (userId, actor) => {
   };
 };
 
+const getUserByFirebaseUid = async (firebaseUid) => {
+  const snapshot = await db
+    .collection(USERS_COLLECTION)
+    .where('firebaseUid', '==', firebaseUid)
+    .limit(1)
+    .get();
+
+  if (snapshot.empty) {
+    throw new AppError('User not found', 404);
+  }
+
+  const doc = snapshot.docs[0];
+  return sanitizeUser({ id: doc.id, ...doc.data() });
+};
+
 const updateOwnPassword = async (userId, payload, metadata) =>
   changePassword(userId, payload, metadata);
 
@@ -324,6 +349,7 @@ module.exports = {
   createUser,
   listUsers,
   getUserDetails,
+  getUserByFirebaseUid,
   updateUser,
   deleteUser,
   updateOwnPassword,

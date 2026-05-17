@@ -79,6 +79,27 @@ service cloud.firestore {
       }
     }
 
+    // ─── CHAT SESSIONS (Chatbot) ─────────────────────────────────────────────
+    match /chat_sessions/{sessionId} {
+      // Authenticated users can read their own chat sessions
+      allow read: if request.auth != null
+        && resource.data.userId == request.auth.uid;
+
+      // Only the backend can write to chat_sessions (userId, role, updatedAt)
+      // Direct client writes are not allowed
+      allow write: if false;
+
+      // ── Messages subcollection ────────────────────────────────────────────
+      match /messages/{messageId} {
+        // Authenticated users can read their own messages
+        allow read: if request.auth != null
+          && get(/databases/$(database)/documents/chat_sessions/$(sessionId)).data.userId == request.auth.uid;
+
+        // Only the backend can write messages (no direct client writes)
+        allow write: if false;
+      }
+    }
+
     // ─── ALL OTHER COLLECTIONS ────────────────────────────────────────────────
     // users, notifications, audit_logs — backend (Admin SDK) only.
     match /{document=**} {

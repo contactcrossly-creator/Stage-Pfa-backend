@@ -32,6 +32,12 @@ router.get(
   userController.listUsers
 );
 router.get(
+  '/firebase-uid/:firebaseUid',
+  authenticate,
+  requirePasswordChangeCompleted,
+  userController.getUserByFirebaseUid
+);
+router.get(
   '/:id',
   authenticate,
   requirePasswordChangeCompleted,

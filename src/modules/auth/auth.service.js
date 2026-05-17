@@ -2,6 +2,7 @@ const { db, admin } = require("../../config/firebase.config");
 const { hashPassword, comparePassword } = require("../../utils/bcrypt.util");
 const { signToken } = require("../../utils/jwt.util");
 const { AppError } = require("../../utils/app-error.util");
+const { updateFirebasePassword } = require("../../services/firebase-auth.service");
 const {
   loginSchema,
   changePasswordSchema,
@@ -183,6 +184,10 @@ const changePassword = async (userId, payload, metadata = {}) => {
   }
 
   const nextPasswordHash = await hashPassword(validatedPayload.newPassword);
+
+  if (user.firebaseUid) {
+    await updateFirebasePassword(user.firebaseUid, validatedPayload.newPassword);
+  }
 
   await db.collection(USERS_COLLECTION).doc(user.id).update({
     passwordHash: nextPasswordHash,
