@@ -10,17 +10,6 @@ const getProfile = async (req, res, next) => {
   }
 };
 
-const getAdminDashboard = async (req, res, next) => {
-  try {
-    res.status(200).json({
-      message: 'Admin-only resource granted',
-      user: req.user,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
 const createUser = async (req, res, next) => {
   try {
     const result = await userService.createUser(req.body, req.user);
@@ -94,7 +83,6 @@ const changePassword = async (req, res, next) => {
 
 module.exports = {
   getProfile,
-  getAdminDashboard,
   createUser,
   listUsers,
   getUserById,

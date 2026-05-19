@@ -11,13 +11,6 @@ const router = express.Router();
 
 router.patch('/change-password', authenticate, userController.changePassword);
 router.get('/me', authenticate, requirePasswordChangeCompleted, userController.getProfile);
-router.get(
-  '/admin-dashboard',
-  authenticate,
-  requirePasswordChangeCompleted,
-  authorize('ADMIN'),
-  userController.getAdminDashboard
-);
 router.post(
   '/',
   authenticate,

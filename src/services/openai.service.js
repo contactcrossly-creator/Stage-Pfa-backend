@@ -7,7 +7,7 @@ let openaiClient = null;
 const getOpenAIClient = () => {
   if (!openaiClient) {
     const apiKey = getEnv('OPENAI_API_KEY');
-    openaiClient = new OpenAI({ apiKey });
+    openaiClient = new OpenAI({ apiKey, baseURL: 'https://openrouter.ai/api/v1' });
   }
   return openaiClient;
 };
@@ -56,7 +56,7 @@ Important rules:
       ];
 
       const completion = await client.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'deepseek/deepseek-v4-flash:free',
         messages,
         max_tokens: 1000,
         temperature: 0.4,

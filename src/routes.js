@@ -17,5 +17,6 @@ router.use("/productions", require("./modules/production/production.routes"));
 router.use("/quality", require("./modules/quality/quality.routes"));
 router.use("/incidents", require("./modules/hse/hse.routes"));
 router.use("/notifications", require("./modules/notification/notification.routes"));
+router.use("/dashboard", require("./modules/dashboard/dashboard.routes"));
 
 module.exports = router;
