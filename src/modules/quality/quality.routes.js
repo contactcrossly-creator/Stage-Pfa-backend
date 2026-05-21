@@ -25,6 +25,7 @@ router.get('/report/:id/share', authorize('ADMIN', 'QUALITY'), qualityController
 router.post('/report/:id/share', authorize('QUALITY'), qualityController.shareTestReport);
 router.get('/report', authorize('ADMIN', 'QUALITY'), qualityController.downloadTestsReport);
 router.get('/report/:id', authorize('ADMIN', 'QUALITY'), qualityController.downloadTestReport);
+router.delete('/report/:id', authorize('ADMIN', 'QUALITY'), qualityController.deleteSharedReport);
 
 router.get('/:id', qualityController.getTest);
 

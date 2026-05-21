@@ -12,6 +12,8 @@ const {
 
 const PRODUCTS_COLLECTION = "products";
 const MOVEMENTS_COLLECTION = "stock_movements";
+const PRODUCTIONS_COLLECTION = "production_batches";
+const QUALITY_TESTS_COLLECTION = "quality_tests";
 const USERS_COLLECTION = "users";
 
 const validate = (schema, payload) => {
@@ -151,7 +153,30 @@ const deleteProduct = async (id, actor) => {
     throw new AppError("Product not found", 404);
   }
 
-  await docRef.delete();
+  const batch = db.batch();
+  batch.delete(docRef);
+
+  const batchesSnapshot = await db
+    .collection(PRODUCTIONS_COLLECTION)
+    .where("productId", "==", id)
+    .get();
+
+  for (const batchDoc of batchesSnapshot.docs) {
+    const testsSnapshot = await db
+      .collection(QUALITY_TESTS_COLLECTION)
+      .where("batchId", "==", batchDoc.id)
+      .get();
+    testsSnapshot.docs.forEach((doc) => batch.delete(doc.ref));
+    batch.delete(batchDoc.ref);
+  }
+
+  const movementsSnapshot = await db
+    .collection(MOVEMENTS_COLLECTION)
+    .where("productId", "==", id)
+    .get();
+  movementsSnapshot.docs.forEach((doc) => batch.delete(doc.ref));
+
+  await batch.commit();
 
   await writeAuditLog({
     actorUserId: actor.userId,

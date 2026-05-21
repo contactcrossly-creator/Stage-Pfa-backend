@@ -122,22 +122,25 @@ const createIncident = async (payload, actor) => {
 
   await docRef.set(incident);
 
+  const reporterName = actor.nom || 'Unknown';
+
+  await notificationService.sendNotification({
+    title: '🚨 New Incident Reported',
+    message: `A new incident has been reported by ${reporterName}: ${incident.title} (Status: ${incident.status})`,
+    type: 'INFO',
+    targetType: 'ROLE',
+    targetValue: 'HSE',
+  });
+  await notificationService.sendNotification({
+    title: '🚨 New Incident Reported',
+    message: `A new incident has been reported by ${reporterName}: ${incident.title} (Status: ${incident.status})`,
+    type: 'INFO',
+    targetType: 'ROLE',
+    targetValue: 'ADMIN',
+  });
+
   if (incident.priority === 'CRITICAL') {
     await triggerCriticalAlert(incident);
-    await notificationService.sendNotification({
-      title: '🚨 CRITICAL SAFETY ALERT',
-      message: `A critical incident has been reported: ${incident.title}`,
-      type: 'ALERT',
-      targetType: 'ROLE',
-      targetValue: 'HSE',
-    });
-    await notificationService.sendNotification({
-      title: '🚨 CRITICAL SAFETY ALERT',
-      message: `A critical incident has been reported: ${incident.title}`,
-      type: 'ALERT',
-      targetType: 'ROLE',
-      targetValue: 'ADMIN',
-    });
   }
 
   await writeAuditLog({

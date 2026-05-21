@@ -40,7 +40,6 @@ const generateTestPdf = (test) =>
     doc.moveDown(0.5);
 
     const testInfoRows = [
-      ['ID du Test:', test.id],
       ['Statut:', test.status === 'PASSED' ? '✅ Réussi' : test.status === 'FAILED' ? '❌ Échoué' : test.status],
       ['Testé par:', testerName],
       ['Date du test:', formatDate(test.testedAt)],
@@ -62,7 +61,6 @@ const generateTestPdf = (test) =>
 
     const batchInfoRows = [
       ['Produit:', productName],
-      ['ID du Lot:', batchId],
       ['Quantité Planifiée:', batch?.quantityPlanned?.toString() || 'N/A'],
       ['Quantité Produite:', batch?.quantityProduced?.toString() || 'N/A'],
       ['Statut du Lot:', batch?.status || 'N/A'],
@@ -112,8 +110,8 @@ const generateTestsPdf = (tests, pagination) =>
 
     // Table header
     const tableTop = doc.y;
-    const colWidths = [130, 65, 100, 130, 85];
-    const headers = ['ID du Test', 'Statut', 'Testé par', 'Produit', 'Date'];
+    const colWidths = [65, 100, 160, 85];
+    const headers = ['Statut', 'Testé par', 'Produit', 'Date'];
 
     doc.fontSize(9).font('Helvetica-Bold').fillColor('#fff');
     let x = 40;
@@ -140,7 +138,6 @@ const generateTestsPdf = (tests, pagination) =>
       const testerName = test.testedBy?.nom || 'N/A';
       const productName = test.batch?.productId?.name || 'N/A';
       const rowData = [
-        test.id.substring(0, 16) + '...',
         test.status === 'PASSED' ? '✅ Réussi' : test.status === 'FAILED' ? '❌ Échoué' : test.status,
         testerName,
         productName,

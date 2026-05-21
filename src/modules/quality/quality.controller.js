@@ -248,6 +248,42 @@ const shareTestsReport = async (req, res, next) => {
   }
 };
 
+const deleteSharedReport = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const reportsRef = db.collection(SHARED_REPORTS_COLLECTION);
+
+    let snapshot = await reportsRef.doc(id).get();
+
+    if (!snapshot.exists) {
+      const querySnapshot = await reportsRef.where('testId', '==', id).get();
+      if (querySnapshot.empty) {
+        return res.status(404).json({ status: 'error', message: 'Rapport introuvable' });
+      }
+
+      const batch = db.batch();
+      querySnapshot.docs.forEach((doc) => batch.delete(doc.ref));
+      await batch.commit();
+
+      qualityReportService.deleteReport(id);
+
+      return res.status(200).json({ status: 'success', message: 'Rapport supprimé avec succès' });
+    }
+
+    const reportData = snapshot.data();
+
+    if (reportData.testId) {
+      qualityReportService.deleteReport(reportData.testId);
+    }
+
+    await snapshot.ref.delete();
+
+    res.status(200).json({ status: 'success', message: 'Rapport supprimé avec succès' });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getSharedReports = async (req, res, next) => {
   try {
     const snapshot = await db
@@ -291,4 +327,5 @@ module.exports = {
   shareTestReport,
   shareTestsReport,
   getSharedReports,
+  deleteSharedReport,
 };
