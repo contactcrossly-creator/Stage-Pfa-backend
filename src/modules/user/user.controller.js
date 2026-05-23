@@ -53,7 +53,9 @@ const updateUser = async (req, res, next) => {
 
 const deleteUser = async (req, res, next) => {
   try {
-    const result = await userService.deleteUser(req.params.id, req.user);
+    const result = await userService.deleteUser(req.params.id, req.user, {
+      permanent: req.query.permanent === 'true',
+    });
     res.status(200).json(result);
   } catch (error) {
     next(error);
@@ -63,6 +65,15 @@ const deleteUser = async (req, res, next) => {
 const getUserByFirebaseUid = async (req, res, next) => {
   try {
     const user = await userService.getUserByFirebaseUid(req.params.firebaseUid);
+    res.status(200).json({ user });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const restoreUser = async (req, res, next) => {
+  try {
+    const user = await userService.restoreUser(req.params.id, req.user);
     res.status(200).json({ user });
   } catch (error) {
     next(error);
@@ -89,5 +100,6 @@ module.exports = {
   getUserByFirebaseUid,
   updateUser,
   deleteUser,
+  restoreUser,
   changePassword,
 };

@@ -2,6 +2,7 @@ const { db, admin } = require("../../config/firebase.config");
 const { AppError } = require("../../utils/app-error.util");
 const { getUserById } = require("../auth/auth.service");
 const { writeAuditLog } = require("../user/user.service");
+const notificationService = require("../notification/notification.service");
 const {
   createGroupSchema,
   updateGroupSchema,
@@ -82,6 +83,49 @@ const ensureUsersExist = async (userIds) => {
   }
 };
 
+const notifyAddedMembers = async (groupId, groupName, userIds, actorId) => {
+  const recipients = userIds.filter((id) => id !== actorId);
+  if (recipients.length === 0) return;
+
+  await Promise.all(
+    recipients.map((userId) =>
+      notificationService.sendNotification({
+        title: `Added to ${groupName}`,
+        message: `You have been added to the group "${groupName}"`,
+        type: "INFO",
+        targetType: "USER",
+        targetValue: userId,
+      }),
+    ),
+  );
+
+  const snapshots = await Promise.all(
+    recipients.map((id) => db.collection(USERS_COLLECTION).doc(id).get()),
+  );
+  const tokens = snapshots
+    .filter((s) => s.exists && s.data().fcmToken)
+    .map((s) => s.data().fcmToken);
+
+  if (tokens.length > 0) {
+    try {
+      await admin.messaging().sendEachForMulticast({
+        tokens,
+        notification: {
+          title: `Added to ${groupName}`,
+          body: 'You have been added to this group',
+        },
+        data: {
+          type: 'GROUP_ADDED',
+          groupId,
+          groupName,
+        },
+      });
+    } catch (err) {
+      console.error('[group] FCM error:', err.message);
+    }
+  }
+};
+
 const getGroupById = async (groupId) => {
   validate(groupIdParamSchema, { id: groupId });
   const snapshot = await db.collection(GROUPS_COLLECTION).doc(groupId).get();
@@ -142,6 +186,8 @@ const createGroup = async (payload, actor) => {
       }),
     ),
   );
+
+  await notifyAddedMembers(group.id, group.name, members, actor.userId);
 
   await writeAuditLog({
     actorUserId: actor.userId,
@@ -242,6 +288,8 @@ const updateGroup = async (groupId, payload, actor) => {
     ]);
 
     updates.members = newMembers;
+
+    await notifyAddedMembers(group.id, group.name, addedMembers, actor.userId);
   }
 
   await db.collection(GROUPS_COLLECTION).doc(group.id).update(updates);
@@ -325,6 +373,8 @@ const addMembers = async (groupId, payload, actor) => {
       }),
     ),
   );
+
+  await notifyAddedMembers(group.id, group.name, usersToAdd, actor.userId);
 
   await writeAuditLog({
     actorUserId: actor.userId,

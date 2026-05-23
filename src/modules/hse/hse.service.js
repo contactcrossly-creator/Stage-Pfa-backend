@@ -2,6 +2,7 @@ const { db, admin } = require('../../config/firebase.config');
 const { AppError } = require('../../utils/app-error.util');
 const { writeAuditLog } = require('../user/user.service');
 const notificationService = require('../notification/notification.service');
+const storageService = require('../../services/storage.service');
 const {
   createIncidentSchema,
   updateIncidentSchema,
@@ -77,6 +78,7 @@ const sanitizeIncident = (i, userMap = {}) => ({
   assignedTo: i.assignedTo
     ? userMap[i.assignedTo] || { id: i.assignedTo, nom: 'Utilisateur supprimé' }
     : null,
+  images: Array.isArray(i.images) ? i.images : [],
   createdAt: toIsoDate(i.createdAt),
   resolvedAt: toIsoDate(i.resolvedAt),
   updatedAt: toIsoDate(i.updatedAt),
@@ -115,6 +117,7 @@ const createIncident = async (payload, actor) => {
     status: 'OPEN',
     reportedBy: actor.userId,
     assignedTo: null,
+    images: [],
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     resolvedAt: null,
@@ -290,6 +293,45 @@ const triggerManualAlert = async (id, actor) => {
     return { message: 'Alert triggered successfully' };
 };
 
+const addIncidentImages = async (id, files) => {
+  const incident = await getIncidentById(id);
+  const uploads = await Promise.all(
+    files.map((f) => storageService.uploadFile(f.buffer, f.originalname, f.mimetype)),
+  );
+
+  const imageUrls = uploads.map((u) => u.url);
+
+  await db.collection(INCIDENTS_COLLECTION).doc(id).update({
+    images: admin.firestore.FieldValue.arrayUnion(...imageUrls),
+  });
+
+  return imageUrls;
+};
+
+const removeIncidentImage = async (id, filename, actor) => {
+  const incident = await getIncidentById(id);
+
+  const isAdminOrHse = actor.role === 'ADMIN' || actor.role === 'HSE';
+  if (!isAdminOrHse && incident.reportedBy !== actor.userId) {
+    throw new AppError('Unauthorized to remove images from this incident', 403);
+  }
+
+  const urlToRemove = `https://storage.googleapis.com/stage-pfa-ea22e.appspot.com/${filename}`;
+  const currentImages = incident.images || [];
+
+  if (!currentImages.includes(urlToRemove)) {
+    throw new AppError('Image not found on this incident', 404);
+  }
+
+  await storageService.deleteFile(filename);
+
+  await db.collection(INCIDENTS_COLLECTION).doc(id).update({
+    images: admin.firestore.FieldValue.arrayRemove(urlToRemove),
+  });
+
+  return { message: 'Image removed successfully' };
+};
+
 const deleteIncident = async (id, actor) => {
   validate(incidentIdParamSchema, { id });
   const incident = await getIncidentById(id);
@@ -297,10 +339,18 @@ const deleteIncident = async (id, actor) => {
   const isAdminOrHse = actor.role === 'ADMIN' || actor.role === 'HSE';
   const isReporter = incident.reportedBy === actor.userId;
 
-  // Only the reporter, HSE, or ADMIN can delete an incident
   if (!isAdminOrHse && !isReporter) {
     throw new AppError('Unauthorized to delete this incident', 403);
   }
+
+  const images = incident.images || [];
+  await Promise.all(
+    images.map((url) => {
+      const parts = url.split('/');
+      const filename = parts[parts.length - 1];
+      return storageService.deleteFile(filename).catch(() => {});
+    }),
+  );
 
   await db.collection(INCIDENTS_COLLECTION).doc(id).delete();
 
@@ -326,4 +376,6 @@ module.exports = {
   updateIncident,
   triggerManualAlert,
   deleteIncident,
+  addIncidentImages,
+  removeIncidentImage,
 };

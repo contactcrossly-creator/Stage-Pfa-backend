@@ -6,6 +6,7 @@ const {
   requirePasswordChangeCompleted,
 } = require('../../middlewares/auth.middleware');
 const { authorize } = require('../../middlewares/role.middleware');
+const upload = require('../../middlewares/upload.middleware');
 
 const router = express.Router();
 
@@ -33,5 +34,11 @@ router.delete('/:id', hseController.deleteIncident);
 
 // Trigger Manual Alert - HSE and ADMIN
 router.post('/:id/alert', authorize('ADMIN', 'HSE'), hseController.triggerAlert);
+
+// Upload images to incident
+router.post('/:id/images', upload.array('images', 5), hseController.uploadImages);
+
+// Delete image from incident
+router.delete('/:id/images/:filename', hseController.deleteImage);
 
 module.exports = router;

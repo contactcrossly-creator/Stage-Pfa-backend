@@ -63,6 +63,27 @@ const deleteIncident = async (req, res, next) => {
   }
 };
 
+const uploadImages = async (req, res, next) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ status: 'error', message: 'No files uploaded' });
+    }
+    const images = await hseService.addIncidentImages(req.params.id, req.files);
+    res.status(200).json({ status: 'success', data: { images } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const deleteImage = async (req, res, next) => {
+  try {
+    const result = await hseService.removeIncidentImage(req.params.id, req.params.filename, req.user);
+    res.status(200).json({ status: 'success', ...result });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createIncident,
   getIncidents,
@@ -71,4 +92,6 @@ module.exports = {
   updateIncident,
   triggerAlert,
   deleteIncident,
+  uploadImages,
+  deleteImage,
 };

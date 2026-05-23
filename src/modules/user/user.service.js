@@ -5,7 +5,7 @@ const { hashPassword } = require('../../utils/bcrypt.util');
 const { AppError } = require('../../utils/app-error.util');
 const { getUserByEmail, getUserById, changePassword } = require('../auth/auth.service');
 const { createFirebaseUser } = require('../../services/firebase-auth.service');
-const { sendCredentialsEmail } = require('../../services/firebase-email.service');
+const { sendUserCredentialsEmail } = require('../../utils/email.util');
 const {
   createUserSchema,
   listUsersQuerySchema,
@@ -202,7 +202,7 @@ const createUser = async (payload, actor) => {
 
   if (validatedPayload.sendEmail) {
     try {
-      emailNotification = await sendCredentialsEmail({
+      emailNotification = await sendUserCredentialsEmail({
         to: user.email,
         nom: user.nom,
         temporaryPassword,
@@ -325,7 +325,7 @@ const updateUser = async (userId, payload, actor) => {
   return sanitizeUser(await ensureUserExists(user.id));
 };
 
-const deleteUser = async (userId, actor) => {
+const deleteUser = async (userId, actor, options = {}) => {
   validate(userIdParamSchema, { id: userId });
 
   if (actor.userId === userId) {
@@ -334,6 +334,38 @@ const deleteUser = async (userId, actor) => {
 
   const user = await ensureUserExists(userId);
 
+  const groupsSnapshot = await db
+    .collection(GROUPS_COLLECTION)
+    .where('members', 'array-contains', user.id)
+    .get();
+
+  await Promise.all(
+    groupsSnapshot.docs.map((doc) =>
+      doc.ref.update({
+        members: admin.firestore.FieldValue.arrayRemove(user.id),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedBy: actor.userId,
+      })
+    )
+  );
+
+  if (options.permanent) {
+    if (user.firebaseUid) {
+      await admin.auth().deleteUser(user.firebaseUid);
+    }
+    await db.collection(USERS_COLLECTION).doc(user.id).delete();
+
+    await writeAuditLog({
+      actorUserId: actor.userId,
+      action: 'USER_DELETED',
+      targetType: 'user',
+      targetId: user.id,
+      metadata: { email: user.email, permanent: true },
+    });
+
+    return { message: 'User permanently deleted' };
+  }
+
   await db.collection(USERS_COLLECTION).doc(user.id).update({
     isActive: false,
     deletedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -341,21 +373,6 @@ const deleteUser = async (userId, actor) => {
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedBy: actor.userId,
   });
-
-  const groupsSnapshot = await db
-    .collection(GROUPS_COLLECTION)
-    .where('memberIds', 'array-contains', user.id)
-    .get();
-
-  await Promise.all(
-    groupsSnapshot.docs.map((doc) =>
-      doc.ref.update({
-        memberIds: admin.firestore.FieldValue.arrayRemove(user.id),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedBy: actor.userId,
-      })
-    )
-  );
 
   await writeAuditLog({
     actorUserId: actor.userId,
@@ -403,6 +420,37 @@ const getUserByFirebaseUid = async (firebaseUid) => {
   return sanitizeUser({ id: doc.id, ...doc.data() });
 };
 
+const restoreUser = async (userId, actor) => {
+  const validatedParams = validate(userIdParamSchema, { id: userId });
+  const user = await getUserById(validatedParams.id);
+
+  if (!user) {
+    throw new AppError('User not found', 404);
+  }
+
+  if (user.isActive !== false) {
+    throw new AppError('User is already active', 400);
+  }
+
+  await db.collection(USERS_COLLECTION).doc(user.id).update({
+    isActive: true,
+    deletedAt: null,
+    deletedBy: null,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedBy: actor.userId,
+  });
+
+  await writeAuditLog({
+    actorUserId: actor.userId,
+    action: 'USER_UPDATED',
+    targetType: 'user',
+    targetId: user.id,
+    metadata: { email: user.email, restored: true },
+  });
+
+  return sanitizeUser(await getUserById(user.id));
+};
+
 const updateOwnPassword = async (userId, payload, metadata) =>
   changePassword(userId, payload, metadata);
 
@@ -415,5 +463,6 @@ module.exports = {
   updateUser,
   deleteUser,
   updateOwnPassword,
+  restoreUser,
   writeAuditLog,
 };

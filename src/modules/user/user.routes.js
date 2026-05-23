@@ -43,6 +43,14 @@ router.put(
   authorize('ADMIN'),
   userController.updateUser
 );
+router.post(
+  '/:id/restore',
+  authenticate,
+  requirePasswordChangeCompleted,
+  authorize('ADMIN'),
+  userController.restoreUser
+);
+
 router.delete(
   '/:id',
   authenticate,
