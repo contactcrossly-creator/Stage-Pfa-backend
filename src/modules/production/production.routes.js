@@ -15,6 +15,7 @@ router.use(authenticate, requirePasswordChangeCompleted);
 // View routes - All authenticated users
 router.get('/', productionController.getProductions);
 router.get('/:id', productionController.getProduction);
+router.get('/:id/qrcode', productionController.getProductionQrCode);
 
 // Modification routes - Restricted to ADMIN and EMPLOYEE
 router.post('/', authorize('ADMIN', 'EMPLOYEE'), productionController.createProduction);

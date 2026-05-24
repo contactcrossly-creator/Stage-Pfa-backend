@@ -54,6 +54,16 @@ const cancelProduction = async (req, res, next) => {
   }
 };
 
+const getProductionQrCode = async (req, res, next) => {
+  try {
+    const buffer = await productionService.getBatchQrCode(req.params.id);
+    res.set("Content-Type", "image/png");
+    res.send(buffer);
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createProduction,
   getProductions,
@@ -61,4 +71,5 @@ module.exports = {
   startProduction,
   completeProduction,
   cancelProduction,
+  getProductionQrCode,
 };

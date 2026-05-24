@@ -2,6 +2,7 @@ const { db, admin } = require('../../config/firebase.config');
 const { AppError } = require('../../utils/app-error.util');
 const { writeAuditLog } = require('../user/user.service');
 const notificationService = require('../notification/notification.service');
+const { generateQrDataUrl, generateQrBuffer } = require('../../utils/qr-code.util');
 const {
   createProductionSchema,
   completeProductionSchema,
@@ -89,6 +90,7 @@ const sanitizeBatch = (b) => ({
   quantityPlanned: b.quantityPlanned,
   quantityProduced: b.quantityProduced || 0,
   status: b.status,
+  qrCode: b.qrCode || null,
   createdBy: b.createdBy,
   createdAt: toIsoDate(b.createdAt),
   startedAt: toIsoDate(b.startedAt),
@@ -143,12 +145,14 @@ const createProduction = async (payload, actor) => {
   }
 
   const docRef = db.collection(PRODUCTIONS_COLLECTION).doc();
+  const qrCode = await generateQrDataUrl("production", docRef.id, validatedPayload.productId);
   const batch = {
     id: docRef.id,
     productId: validatedPayload.productId,
     quantityPlanned: validatedPayload.quantityPlanned,
     quantityProduced: 0,
     status: 'PENDING',
+    qrCode,
     startedAt: null,
     endedAt: null,
     createdBy: actor.userId,
@@ -294,6 +298,11 @@ const cancelProduction = async (id, actor) => {
   return enriched[0];
 };
 
+const getBatchQrCode = async (id) => {
+  const batch = await getBatchById(id);
+  return generateQrBuffer("production", batch.id, batch.productId);
+};
+
 module.exports = {
   createProduction,
   listProductions,
@@ -305,4 +314,5 @@ module.exports = {
   startProduction,
   completeProduction,
   cancelProduction,
+  getBatchQrCode,
 };

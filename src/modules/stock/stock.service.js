@@ -2,6 +2,7 @@ const { db, admin } = require("../../config/firebase.config");
 const { AppError } = require("../../utils/app-error.util");
 const { writeAuditLog } = require("../user/user.service");
 const notificationService = require("../notification/notification.service");
+const { generateQrDataUrl, generateQrBuffer } = require("../../utils/qr-code.util");
 const {
   createProductSchema,
   updateProductSchema,
@@ -50,6 +51,7 @@ const sanitizeProduct = (p) => ({
   price: typeof p.price === "number" ? p.price : 0,
   quantity: p.quantity || 0,
   minThreshold: p.minThreshold || 0,
+  qrCode: p.qrCode || null,
   createdAt: toIsoDate(p.createdAt),
   updatedAt: toIsoDate(p.updatedAt),
 });
@@ -70,9 +72,11 @@ const createProduct = async (payload, actor) => {
   const validatedPayload = validate(createProductSchema, payload);
 
   const docRef = db.collection(PRODUCTS_COLLECTION).doc();
+  const qrCode = await generateQrDataUrl("product", docRef.id, validatedPayload.name);
   const product = {
     id: docRef.id,
     ...validatedPayload,
+    qrCode,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     createdBy: actor.userId,
@@ -339,6 +343,11 @@ const listAlerts = async () => {
   return { items: alerts, total: alerts.length };
 };
 
+const getProductQrCode = async (id) => {
+  const product = await getProductById(id);
+  return generateQrBuffer("product", product.id, product.name);
+};
+
 module.exports = {
   createProduct,
   listProducts,
@@ -348,4 +357,5 @@ module.exports = {
   recordMovement,
   listMovements,
   listAlerts,
+  getProductQrCode,
 };

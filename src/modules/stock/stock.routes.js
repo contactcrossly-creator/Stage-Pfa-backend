@@ -20,6 +20,7 @@ productRouter.use(...commonMiddleware);
 
 productRouter.get('/', stockController.getProducts);
 productRouter.get('/:id', stockController.getProduct);
+productRouter.get('/:id/qrcode', stockController.getProductQrCode);
 productRouter.post('/', authorize('ADMIN', 'STOCK'), stockController.createProduct);
 productRouter.put('/:id', authorize('ADMIN', 'STOCK'), stockController.updateProduct);
 productRouter.delete('/:id', authorize('ADMIN', 'STOCK'), stockController.deleteProduct);

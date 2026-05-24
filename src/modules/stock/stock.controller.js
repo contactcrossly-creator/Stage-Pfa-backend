@@ -76,6 +76,16 @@ const getAlerts = async (req, res, next) => {
   }
 };
 
+const getProductQrCode = async (req, res, next) => {
+  try {
+    const buffer = await stockService.getProductQrCode(req.params.id);
+    res.set("Content-Type", "image/png");
+    res.send(buffer);
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createProduct,
   getProducts,
@@ -85,4 +95,5 @@ module.exports = {
   recordMovement,
   getMovements,
   getAlerts,
+  getProductQrCode,
 };

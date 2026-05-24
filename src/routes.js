@@ -18,5 +18,6 @@ router.use("/quality", require("./modules/quality/quality.routes"));
 router.use("/incidents", require("./modules/hse/hse.routes"));
 router.use("/notifications", require("./modules/notification/notification.routes"));
 router.use("/dashboard", require("./modules/dashboard/dashboard.routes"));
+router.use("/scan", require("./modules/scan/scan.routes"));
 
 module.exports = router;
