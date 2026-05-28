@@ -162,6 +162,10 @@ const listIncidents = async (query, actor, filterByMy = false) => {
   const validatedQuery = validate(listIncidentsQuerySchema, query);
   let firestoreQuery = db.collection(INCIDENTS_COLLECTION).orderBy('createdAt', 'desc');
 
+  if (actor.role === 'STOCK') {
+    filterByMy = true;
+  }
+
   if (filterByMy) {
     // If 'my', filter where reportedBy == actor OR assignedTo == actor
     // Firestore doesn't support easy OR across fields in simple queries without composite indexes or multiple queries.
@@ -223,6 +227,10 @@ const updateIncident = async (id, payload, actor) => {
 
   const isAdminOrHse = actor.role === 'ADMIN' || actor.role === 'HSE';
   const isReporter = incident.reportedBy === actor.userId;
+
+  if (actor.role === 'STOCK') {
+    throw new AppError('Stock role cannot update incidents', 403);
+  }
 
   // Business Rules for Roles
   if (!isAdminOrHse) {

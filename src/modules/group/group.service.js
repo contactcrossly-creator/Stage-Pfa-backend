@@ -126,6 +126,91 @@ const notifyAddedMembers = async (groupId, groupName, userIds, actorId) => {
   }
 };
 
+const notifyRemovedMembers = async (groupId, groupName, userIds, actorId) => {
+  const recipients = userIds.filter((id) => id !== actorId);
+  if (recipients.length === 0) return;
+
+  await Promise.all(
+    recipients.map((userId) =>
+      notificationService.sendNotification({
+        title: `Removed from ${groupName}`,
+        message: `You have been removed from the group "${groupName}"`,
+        type: "INFO",
+        targetType: "USER",
+        targetValue: userId,
+      }),
+    ),
+  );
+
+  const snapshots = await Promise.all(
+    recipients.map((id) => db.collection(USERS_COLLECTION).doc(id).get()),
+  );
+  const tokens = snapshots
+    .filter((s) => s.exists && s.data().fcmToken)
+    .map((s) => s.data().fcmToken);
+
+  if (tokens.length > 0) {
+    try {
+      await admin.messaging().sendEachForMulticast({
+        tokens,
+        notification: {
+          title: `Removed from ${groupName}`,
+          body: 'You have been removed from this group',
+        },
+        data: {
+          type: 'GROUP_REMOVED',
+          groupId,
+          groupName,
+        },
+      });
+    } catch (err) {
+      console.error('[group] FCM error:', err.message);
+    }
+  }
+};
+
+const notifyGroupDeleted = async (groupId, groupName, userIds) => {
+  if (userIds.length === 0) return;
+
+  await Promise.all(
+    userIds.map((userId) =>
+      notificationService.sendNotification({
+        title: `Group Deleted`,
+        message: `The group "${groupName}" has been deleted`,
+        type: "INFO",
+        targetType: "USER",
+        targetValue: userId,
+      }),
+    ),
+  );
+
+  const snapshots = await Promise.all(
+    userIds.map((id) => db.collection(USERS_COLLECTION).doc(id).get()),
+  );
+  const tokens = snapshots
+    .filter((s) => s.exists && s.data().fcmToken)
+    .map((s) => s.data().fcmToken);
+
+  if (tokens.length > 0) {
+    try {
+      await admin.messaging().sendEachForMulticast({
+        tokens,
+        notification: {
+          title: `Group Deleted`,
+          body: `The group "${groupName}" has been deleted`,
+        },
+        data: {
+          type: 'GROUP_DELETED',
+          groupId,
+          groupName,
+        },
+      });
+    } catch (err) {
+      console.error('[group] FCM error:', err.message);
+    }
+  }
+};
+
 const getGroupById = async (groupId) => {
   validate(groupIdParamSchema, { id: groupId });
   const snapshot = await db.collection(GROUPS_COLLECTION).doc(groupId).get();
@@ -290,6 +375,7 @@ const updateGroup = async (groupId, payload, actor) => {
     updates.members = newMembers;
 
     await notifyAddedMembers(group.id, group.name, addedMembers, actor.userId);
+    await notifyRemovedMembers(group.id, group.name, removedMembers, actor.userId);
   }
 
   await db.collection(GROUPS_COLLECTION).doc(group.id).update(updates);
@@ -326,6 +412,8 @@ const deleteGroup = async (groupId, actor) => {
   );
 
   await db.collection(GROUPS_COLLECTION).doc(group.id).delete();
+
+  await notifyGroupDeleted(group.id, group.name, members);
 
   await writeAuditLog({
     actorUserId: actor.userId,
@@ -416,6 +504,8 @@ const removeMember = async (groupId, userId, actor) => {
     groupIds: admin.firestore.FieldValue.arrayRemove(group.id),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
+
+  await notifyRemovedMembers(group.id, group.name, [userId], actor.userId);
 
   await writeAuditLog({
     actorUserId: actor.userId,
