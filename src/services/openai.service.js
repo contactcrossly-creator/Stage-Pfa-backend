@@ -56,7 +56,7 @@ Important rules:
       ];
 
       const completion = await client.chat.completions.create({
-        model: 'deepseek/deepseek-v4-flash:free',
+        model: 'openrouter/owl-alpha',
         messages,
         max_tokens: 1000,
         temperature: 0.4,
@@ -65,6 +65,41 @@ Important rules:
       return completion.choices[0].message.content;
     } catch (error) {
       console.error('OpenAI service error:', error);
+      const message = error.message?.includes('quota') || error.message?.includes('insufficient_quota')
+        ? 'AI service quota exceeded. Please try again later.'
+        : 'AI service unavailable';
+      throw new Error(message);
+    }
+  }
+
+  async chatStream(role, userMessage, conversationHistory, dbContext) {
+    try {
+      const client = getOpenAIClient();
+
+      const systemPrompt = this.buildSystemPrompt(role, dbContext);
+
+      const history = conversationHistory.slice(-20).map((msg) => ({
+        role: msg.role === 'user' ? 'user' : 'assistant',
+        content: msg.content,
+      }));
+
+      const messages = [
+        { role: 'system', content: systemPrompt },
+        ...history,
+        { role: 'user', content: userMessage },
+      ];
+
+      const stream = await client.chat.completions.create({
+        model: 'openrouter/owl-alpha',
+        messages,
+        max_tokens: 1000,
+        temperature: 0.4,
+        stream: true,
+      });
+
+      return stream;
+    } catch (error) {
+      console.error('OpenAI stream error:', error);
       const message = error.message?.includes('quota') || error.message?.includes('insufficient_quota')
         ? 'AI service quota exceeded. Please try again later.'
         : 'AI service unavailable';

@@ -122,6 +122,87 @@ router.get('/sessions', async (req, res, next) => {
 });
 
 /**
+ * POST /api/chatbot/message/stream
+ * Send a message and receive a streaming SSE response
+ * Body: { message: string, sessionId: string }
+ */
+router.post('/message/stream', chatRateLimiter, async (req, res, next) => {
+  try {
+    const { message, sessionId } = req.body;
+    const uid = req.user.uid;
+    const role = req.user.role;
+
+    if (!message || typeof message !== 'string' || message.trim() === '') {
+      return res.status(400).json({ error: 'Message is required and must be a non-empty string' });
+    }
+
+    if (!sessionId || typeof sessionId !== 'string') {
+      return res.status(400).json({ error: 'SessionId is required' });
+    }
+
+    const messagesRef = db.collection('chat_sessions').doc(sessionId).collection('messages');
+    const historySnapshot = await messagesRef.orderBy('timestamp', 'asc').limit(20).get();
+
+    const conversationHistory = historySnapshot.docs.map((doc) => doc.data());
+
+    const dbContext = await contextService.getSmartContext(role, message, uid);
+
+    const stream = await openaiService.chatStream(role, message, conversationHistory, dbContext);
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+
+    let fullResponse = '';
+
+    for await (const chunk of stream) {
+      const content = chunk.choices?.[0]?.delta?.content || '';
+      if (content) {
+        fullResponse += content;
+        res.write(`data: ${JSON.stringify({ content })}\n\n`);
+      }
+    }
+
+    const timestamp = admin.firestore.Timestamp.now();
+
+    const batch = db.batch();
+    const sessionRef = db.collection('chat_sessions').doc(sessionId);
+    batch.set(
+      sessionRef,
+      { userId: uid, role: role, updatedAt: timestamp },
+      { merge: true }
+    );
+
+    const userMessageRef = messagesRef.doc();
+    batch.set(userMessageRef, {
+      role: 'user',
+      content: message,
+      timestamp: timestamp,
+    });
+
+    const modelMessageRef = messagesRef.doc();
+    batch.set(modelMessageRef, {
+      role: 'model',
+      content: fullResponse,
+      timestamp: timestamp,
+    });
+
+    await batch.commit();
+
+    res.write(`data: ${JSON.stringify({ done: true, sessionId, timestamp: timestamp.toDate().toISOString() })}\n\n`);
+    res.end();
+  } catch (error) {
+    console.error('Chatbot stream error:', error);
+    if (!res.headersSent) {
+      return next(error);
+    }
+    res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+    res.end();
+  }
+});
+
+/**
  * DELETE /api/chatbot/session/:id
  * Delete a chat session and its messages
  */
