@@ -74,15 +74,15 @@ class ContextService {
    * Fetches data from a Firestore collection with optional filtering.
    * @param {string} collectionName - Name of the Firestore collection
    * @param {string} userId - User's ID for filtering (optional)
-   * @param {boolean} isEmployer - Whether the user is an EMPLOYER role
+   * @param {boolean} isEmployee - Whether the user is an EMPLOYEE role
    * @returns {Promise<Array>} Array of document data
    */
-  async fetchCollection(collectionName, userId, isEmployer) {
+  async fetchCollection(collectionName, userId, isEmployee) {
     try {
       const collectionRef = db.collection(collectionName);
       let query = collectionRef.limit(30);
 
-      if (isEmployer && userId) {
+      if (isEmployee && userId) {
         query = collectionRef.where('assignedTo', '==', userId).limit(30);
       }
 
@@ -107,10 +107,10 @@ class ContextService {
    */
   async getSmartContext(role, userMessage, userId) {
     const collections = this.determineCollections(role, userMessage);
-    const isEmployer = role === 'EMPLOYER';
+    const isEmployee = role === 'EMPLOYEE';
 
     const fetchPromises = collections.map((collection) =>
-      this.fetchCollection(collection, userId, isEmployer).then((data) => [collection, data])
+      this.fetchCollection(collection, userId, isEmployee).then((data) => [collection, data])
     );
 
     const results = await Promise.all(fetchPromises);

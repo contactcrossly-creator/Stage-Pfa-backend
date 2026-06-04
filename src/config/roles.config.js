@@ -126,7 +126,7 @@ Response guidelines:
 - Maintain a precise, quality-focused professional tone`,
     canQuery: ['quality_checks', 'defects', 'audits', 'products'],
   },
-  EMPLOYER: {
+  EMPLOYEE: {
     collections: ['tasks', 'schedule', 'announcements'],
     systemPrompt: `You are a personal AI assistant for employees to manage their daily work tasks, schedules, and company communications.
 
