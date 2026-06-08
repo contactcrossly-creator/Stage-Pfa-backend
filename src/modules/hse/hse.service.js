@@ -78,7 +78,9 @@ const sanitizeIncident = (i, userMap = {}) => ({
   assignedTo: i.assignedTo
     ? userMap[i.assignedTo] || { id: i.assignedTo, nom: 'Utilisateur supprimé' }
     : null,
-  images: Array.isArray(i.images) ? i.images : [],
+  images: Array.isArray(i.images)
+    ? i.images.map((img) => (typeof img === 'string' ? { filename: img.split('/').pop(), url: img, filePath: '' } : img))
+    : [],
   createdAt: toIsoDate(i.createdAt),
   resolvedAt: toIsoDate(i.resolvedAt),
   updatedAt: toIsoDate(i.updatedAt),
@@ -304,16 +306,16 @@ const triggerManualAlert = async (id, actor) => {
 const addIncidentImages = async (id, files) => {
   const incident = await getIncidentById(id);
   const uploads = await Promise.all(
-    files.map((f) => storageService.uploadFile(f.buffer, f.originalname, f.mimetype)),
+    files.map((f) => storageService.uploadFile(f)),
   );
 
-  const imageUrls = uploads.map((u) => u.url);
+  const imageObjects = uploads.map((u) => ({ filename: u.filename, url: u.url }));
 
   await db.collection(INCIDENTS_COLLECTION).doc(id).update({
-    images: admin.firestore.FieldValue.arrayUnion(...imageUrls),
+    images: admin.firestore.FieldValue.arrayUnion(...imageObjects),
   });
 
-  return imageUrls;
+  return imageObjects;
 };
 
 const removeIncidentImage = async (id, filename, actor) => {
@@ -324,17 +326,20 @@ const removeIncidentImage = async (id, filename, actor) => {
     throw new AppError('Unauthorized to remove images from this incident', 403);
   }
 
-  const urlToRemove = `https://storage.googleapis.com/stage-pfa-ea22e.appspot.com/${filename}`;
+  const urlToRemove = `/uploads/incidents/${filename}`;
   const currentImages = incident.images || [];
+  const imageToRemove = currentImages.find((img) => {
+    return typeof img === 'string' ? img === urlToRemove : img.url === urlToRemove;
+  });
 
-  if (!currentImages.includes(urlToRemove)) {
+  if (!imageToRemove) {
     throw new AppError('Image not found on this incident', 404);
   }
 
   await storageService.deleteFile(filename);
 
   await db.collection(INCIDENTS_COLLECTION).doc(id).update({
-    images: admin.firestore.FieldValue.arrayRemove(urlToRemove),
+    images: admin.firestore.FieldValue.arrayRemove(imageToRemove),
   });
 
   return { message: 'Image removed successfully' };
@@ -353,7 +358,8 @@ const deleteIncident = async (id, actor) => {
 
   const images = incident.images || [];
   await Promise.all(
-    images.map((url) => {
+    images.map((img) => {
+      const url = typeof img === 'string' ? img : img.url;
       const parts = url.split('/');
       const filename = parts[parts.length - 1];
       return storageService.deleteFile(filename).catch(() => {});
