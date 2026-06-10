@@ -25,5 +25,8 @@ Thumbs.db
 dist/
 build/
 
+# Uploaded assets
+/uploads/
+
 # Coverage
 coverage/
